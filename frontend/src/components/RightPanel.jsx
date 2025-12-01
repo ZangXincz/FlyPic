@@ -9,7 +9,6 @@ function RightPanel() {
   const [isMobile, setIsMobile] = useState(false);
   const [imageUrl, setImageUrl] = useState(''); // 当前显示的图片URL
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [imageCopied, setImageCopied] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -93,77 +92,326 @@ function RightPanel() {
     return imageAPI.getOriginalUrl(currentLibraryId, selectedImage.path);
   };
 
+  // 检查剪贴板 API 是否可用
+  const isClipboardApiSupported = () => {
+    return typeof ClipboardItem !== 'undefined' && 
+           navigator.clipboard && 
+           typeof navigator.clipboard.write === 'function';
+  };
+
+  // 备用方案：使用 contenteditable + execCommand 复制图片（适用于非 HTTPS 环境）
+  const fallbackCopyImage = async (imageUrl) => {
+    return new Promise((resolve) => {
+      // 创建一个隐藏的 contenteditable 容器
+      const container = document.createElement('div');
+      container.setAttribute('contenteditable', 'true');
+      container.style.position = 'fixed';
+      container.style.left = '-9999px';
+      container.style.top = '-9999px';
+      container.style.opacity = '0';
+      document.body.appendChild(container);
+
+      // 创建图片元素
+      const img = document.createElement('img');
+      img.crossOrigin = 'anonymous';
+      
+      img.onload = () => {
+        // 将图片添加到容器
+        container.appendChild(img);
+        
+        // 选中容器内容
+        const range = document.createRange();
+        range.selectNodeContents(container);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        
+        // 执行复制命令
+        let success = false;
+        try {
+          success = document.execCommand('copy');
+        } catch (err) {
+          console.error('execCommand copy 失败:', err);
+        }
+        
+        // 清理
+        selection.removeAllRanges();
+        document.body.removeChild(container);
+        
+        resolve(success);
+      };
+      
+      img.onerror = () => {
+        document.body.removeChild(container);
+        resolve(false);
+      };
+      
+      img.src = imageUrl;
+    });
+  };
+
+  // 备用方案：使用 canvas + blob URL 复制图片
+  const fallbackCopyImageViaCanvas = async (imageUrl) => {
+    return new Promise(async (resolve) => {
+      try {
+        // 获取图片数据
+        const response = await fetch(imageUrl);
+        const blob = await response.blob();
+        
+        // 创建图片元素
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        
+        const loadPromise = new Promise((res, rej) => {
+          img.onload = res;
+          img.onerror = rej;
+        });
+        
+        img.src = URL.createObjectURL(blob);
+        await loadPromise;
+        
+        // 使用 canvas 转换
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        
+        // 清理 blob URL
+        URL.revokeObjectURL(img.src);
+        
+        // 获取 data URL
+        const dataUrl = canvas.toDataURL('image/png');
+        
+        // 创建 contenteditable 容器
+        const container = document.createElement('div');
+        container.setAttribute('contenteditable', 'true');
+        container.style.position = 'fixed';
+        container.style.left = '-9999px';
+        container.style.top = '-9999px';
+        container.style.opacity = '0';
+        document.body.appendChild(container);
+        
+        // 创建使用 data URL 的图片
+        const copyImg = document.createElement('img');
+        copyImg.src = dataUrl;
+        container.appendChild(copyImg);
+        
+        // 等待图片渲染
+        await new Promise(r => setTimeout(r, 50));
+        
+        // 选中并复制
+        const range = document.createRange();
+        range.selectNodeContents(container);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        
+        let success = false;
+        try {
+          success = document.execCommand('copy');
+        } catch (err) {
+          console.error('execCommand copy 失败:', err);
+        }
+        
+        // 清理
+        selection.removeAllRanges();
+        document.body.removeChild(container);
+        
+        resolve(success);
+      } catch (err) {
+        console.error('Canvas 复制失败:', err);
+        resolve(false);
+      }
+    });
+  };
+
+  // 备用方案：使用 execCommand 复制文本
+  const fallbackCopyText = (text) => {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      document.execCommand('copy');
+      return true;
+    } catch (err) {
+      console.error('execCommand 复制失败:', err);
+      return false;
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  };
+
   // 复制图片到剪贴板（支持粘贴到聊天软件和文件管理器）
   const copyImageToClipboard = async () => {
     try {
       // 获取原图URL
       const imageUrl = imageAPI.getOriginalUrl(currentLibraryId, selectedImage.path);
       
-      // 获取图片数据
-      const response = await fetch(imageUrl);
-      const blob = await response.blob();
-      
-      // 创建临时图片元素
-      const img = new Image();
-      const loadPromise = new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-      });
-      img.src = URL.createObjectURL(blob);
-      await loadPromise;
-      
-      // 使用 canvas 转换为 PNG
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      
-      // 转换为 PNG blob
-      canvas.toBlob(async (pngBlob) => {
+      // 方案1：尝试现代 Clipboard API（需要 HTTPS）
+      if (isClipboardApiSupported()) {
         try {
-          // 创建包含多种格式的剪贴板项
+          // 获取图片数据
+          const response = await fetch(imageUrl);
+          const blob = await response.blob();
+          
+          // 创建临时图片元素
+          const img = new Image();
+          const loadPromise = new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+          });
+          img.src = URL.createObjectURL(blob);
+          await loadPromise;
+          
+          // 使用 canvas 转换为 PNG
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          
+          // 清理 blob URL
+          URL.revokeObjectURL(img.src);
+          
+          // 转换为 PNG blob
+          const pngBlob = await new Promise((resolve) => {
+            canvas.toBlob(resolve, 'image/png');
+          });
+          
+          // 尝试写入剪贴板
           const clipboardItem = new ClipboardItem({
-            'image/png': pngBlob,
-            // 添加 HTML 格式（支持更多粘贴场景）
-            'text/html': new Blob(
-              [`<img src="${imageUrl}" alt="${selectedImage.filename}">`],
-              { type: 'text/html' }
-            ),
-            // 添加纯文本格式（文件路径）
-            'text/plain': new Blob(
-              [imageUrl],
-              { type: 'text/plain' }
-            )
+            'image/png': pngBlob
           });
           
           await navigator.clipboard.write([clipboardItem]);
           
           setImageCopied(true);
           setTimeout(() => setImageCopied(false), 2000);
+          return;
         } catch (err) {
-          console.error('写入剪贴板失败:', err);
-          // 如果多格式失败，尝试只复制图像
-          try {
-            await navigator.clipboard.write([
-              new ClipboardItem({ 'image/png': pngBlob })
-            ]);
-            setImageCopied(true);
-            setTimeout(() => setImageCopied(false), 2000);
-          } catch (fallbackErr) {
-            console.error('备用方案也失败:', fallbackErr);
-            alert('复制失败，请重试');
-          }
+          console.warn('Clipboard API 失败，尝试备用方案:', err);
         }
-      }, 'image/png');
+      }
       
-      // 清理
-      URL.revokeObjectURL(img.src);
+      // 方案2：使用 canvas + contenteditable + execCommand（非 HTTPS 环境）
+      console.log('尝试 Canvas + execCommand 方案...');
+      const canvasSuccess = await fallbackCopyImageViaCanvas(imageUrl);
+      if (canvasSuccess) {
+        setImageCopied(true);
+        setTimeout(() => setImageCopied(false), 2000);
+        return;
+      }
+      
+      // 方案3：直接使用图片 URL + contenteditable
+      console.log('尝试直接图片 URL 方案...');
+      const directSuccess = await fallbackCopyImage(imageUrl);
+      if (directSuccess) {
+        setImageCopied(true);
+        setTimeout(() => setImageCopied(false), 2000);
+        return;
+      }
+      
+      // 方案4：最后降级为复制链接
+      console.warn('所有图片复制方案失败，降级为复制链接');
+      const textSuccess = fallbackCopyText(imageUrl);
+      if (textSuccess) {
+        setImageCopied(true);
+        setTimeout(() => setImageCopied(false), 2000);
+        alert('已复制图片链接到剪贴板\n（当前浏览器环境限制，无法直接复制图片）');
+      } else {
+        alert('复制失败，请手动复制图片链接：\n' + imageUrl);
+      }
       
     } catch (error) {
       console.error('复制图片失败:', error);
       alert('复制图片失败，请重试');
     }
+  };
+
+  // 使用 contenteditable 复制多张图片（非 HTTPS 环境）
+  const fallbackCopyMultipleImages = async (imageUrls) => {
+    return new Promise(async (resolve) => {
+      try {
+        // 创建 contenteditable 容器
+        const container = document.createElement('div');
+        container.setAttribute('contenteditable', 'true');
+        container.style.position = 'fixed';
+        container.style.left = '-9999px';
+        container.style.top = '-9999px';
+        container.style.opacity = '0';
+        document.body.appendChild(container);
+        
+        // 加载所有图片并转换为 data URL
+        for (const { url, filename } of imageUrls) {
+          try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            
+            await new Promise((res, rej) => {
+              img.onload = res;
+              img.onerror = rej;
+              img.src = URL.createObjectURL(blob);
+            });
+            
+            // 使用 canvas 转换为 data URL
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(img.src);
+            
+            const dataUrl = canvas.toDataURL('image/png');
+            
+            // 创建图片元素
+            const copyImg = document.createElement('img');
+            copyImg.src = dataUrl;
+            copyImg.alt = filename;
+            copyImg.style.display = 'block';
+            copyImg.style.marginBottom = '10px';
+            container.appendChild(copyImg);
+          } catch (err) {
+            console.error(`加载图片失败: ${filename}`, err);
+          }
+        }
+        
+        // 等待图片渲染
+        await new Promise(r => setTimeout(r, 100));
+        
+        // 选中并复制
+        const range = document.createRange();
+        range.selectNodeContents(container);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        
+        let success = false;
+        try {
+          success = document.execCommand('copy');
+        } catch (err) {
+          console.error('execCommand copy 失败:', err);
+        }
+        
+        // 清理
+        selection.removeAllRanges();
+        document.body.removeChild(container);
+        
+        resolve(success);
+      } catch (err) {
+        console.error('批量复制图片失败:', err);
+        resolve(false);
+      }
+    });
   };
 
   // 批量复制图片
@@ -177,52 +425,76 @@ function RightPanel() {
         return;
       }
       
-      // 多张图片：浏览器限制，只能复制为 HTML 格式（包含多个 img 标签）
-      // 这样粘贴到支持 HTML 的应用时，会显示为多张图片
-      
-      // 加载所有图片并转换为 base64
-      const imageDataList = await Promise.all(
-        imagesToCopy.map(async (img) => {
-          const imageUrl = imageAPI.getOriginalUrl(currentLibraryId, img.path);
-          const response = await fetch(imageUrl);
-          const blob = await response.blob();
-          
-          // 转换为 base64
-          return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              resolve({
-                dataUrl: reader.result,
-                filename: img.filename
-              });
-            };
-            reader.readAsDataURL(blob);
-          });
-        })
-      );
-      
-      // 创建 HTML 格式（多个图片）
-      const htmlContent = imageDataList.map(({ dataUrl, filename }) => 
-        `<img src="${dataUrl}" alt="${filename}" style="display:block; margin:10px 0;">`
-      ).join('\n');
+      // 多张图片
+      const imageUrls = imagesToCopy.map(img => ({
+        url: imageAPI.getOriginalUrl(currentLibraryId, img.path),
+        filename: img.filename
+      }));
       
       // 创建纯文本格式（文件名列表）
       const textContent = imagesToCopy.map(img => img.filename).join('\n');
       
-      try {
-        // 尝试写入多种格式
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([htmlContent], { type: 'text/html' }),
-            'text/plain': new Blob([textContent], { type: 'text/plain' })
-          })
-        ]);
-        
+      // 方案1：尝试现代 Clipboard API
+      if (isClipboardApiSupported()) {
+        try {
+          // 加载所有图片并转换为 base64
+          const imageDataList = await Promise.all(
+            imagesToCopy.map(async (img) => {
+              const imageUrl = imageAPI.getOriginalUrl(currentLibraryId, img.path);
+              const response = await fetch(imageUrl);
+              const blob = await response.blob();
+              
+              return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  resolve({
+                    dataUrl: reader.result,
+                    filename: img.filename
+                  });
+                };
+                reader.readAsDataURL(blob);
+              });
+            })
+          );
+          
+          // 创建 HTML 格式
+          const htmlContent = imageDataList.map(({ dataUrl, filename }) => 
+            `<img src="${dataUrl}" alt="${filename}" style="display:block; margin:10px 0;">`
+          ).join('\n');
+          
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': new Blob([htmlContent], { type: 'text/html' }),
+              'text/plain': new Blob([textContent], { type: 'text/plain' })
+            })
+          ]);
+          
+          setImageCopied(true);
+          setTimeout(() => setImageCopied(false), 2000);
+          return;
+        } catch (err) {
+          console.warn('Clipboard API 失败，尝试备用方案:', err);
+        }
+      }
+      
+      // 方案2：使用 contenteditable + execCommand
+      console.log('尝试 contenteditable 批量复制方案...');
+      const success = await fallbackCopyMultipleImages(imageUrls);
+      if (success) {
         setImageCopied(true);
         setTimeout(() => setImageCopied(false), 2000);
-      } catch (err) {
-        console.error('写入剪贴板失败:', err);
-        alert(`复制失败。\n\n提示：浏览器限制，多张图片会以 HTML 格式复制。\n可粘贴到 Word、富文本编辑器等。\n\n如需单独使用，请使用"导出"功能。`);
+        return;
+      }
+      
+      // 方案3：降级为复制文件名列表
+      console.warn('批量图片复制失败，降级为复制文件名');
+      const textSuccess = fallbackCopyText(textContent);
+      if (textSuccess) {
+        setImageCopied(true);
+        setTimeout(() => setImageCopied(false), 2000);
+        alert(`已复制 ${imagesToCopy.length} 个文件名到剪贴板\n（当前环境限制，建议使用"导出"功能）`);
+      } else {
+        alert('复制失败，请使用"导出"功能下载图片');
       }
       
     } catch (error) {

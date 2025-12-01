@@ -43,7 +43,6 @@ coverage/
 
 # 知识库文件夹 - 不同步到 GitHub
 Knowledge base/
-飞牛打包部署指南.md
 
 # 构建输出
 dist/
