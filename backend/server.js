@@ -9,12 +9,12 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_DIST ? false : 'http://localhost:5173',
+    origin: process.env.FRONTEND_DIST ? false : ['http://localhost:5173', 'http://localhost:3000'],
     methods: ['GET', 'POST']
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 15002;
 
 // Auto-detect frontend dist path
 let FRONTEND_DIST = process.env.FRONTEND_DIST;

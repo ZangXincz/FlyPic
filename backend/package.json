@@ -4,7 +4,7 @@
   "description": "FlyPic backend server",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
+    "dev": "cross-env PORT=15002 nodemon server.js",
     "start": "node server.js"
   },
   "dependencies": {
@@ -19,6 +19,7 @@
     "socket.io": "^4.6.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "nodemon": "^3.0.2"
   }
 }

@@ -72,10 +72,14 @@ const uiConfig = {
   ".url": {
     "flypic.Application": {
       "title": "FlyPic",
-      "icon": "images/icon_{0}.png",
+      "icon": "images/icon-{0}.png",
       "type": "url",
       "protocol": "http",
-      "port": "5002"
+      "port": "15002",
+      "allUsers": true,
+      "control": {
+        "portPerm": "editable"
+      }
     }
   }
 };

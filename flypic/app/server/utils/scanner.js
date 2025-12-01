@@ -1,20 +1,21 @@
 const fs = require('fs');
 const path = require('path');
 const { glob } = require('glob');
-const { 
-  isImageFile, 
-  calculateFileHash, 
-  getImageMetadata, 
-  generateImageThumbnails 
+const {
+  isImageFile,
+  getFileType,
+  calculateFileHash,
+  getImageMetadata,
+  generateImageThumbnails
 } = require('./thumbnail');
+const scanManager = require('./scanManager');
 
 /**
  * Get all image files in a directory
  */
 async function getAllImageFiles(libraryPath) {
-  // 仅匹配常见图片扩展，避免遍历所有非图片文件，显著降低 IO
-  const exts = '{jpg,jpeg,png,webp,gif,bmp,tiff}';
-  const pattern = path.join(libraryPath, '**', `*.${exts}`).replace(/\\/g, '/');
+  // 支持所有文件格式（使用通配符 *.*）
+  const pattern = path.join(libraryPath, '**', '*.*').replace(/\\/g, '/');
   const files = await glob(pattern, {
     nodir: true,
     nocase: true, // 大小写不敏感（Windows/macOS）
@@ -28,17 +29,17 @@ async function getAllImageFiles(libraryPath) {
  */
 function ensureFolderChain(db, folderPath) {
   if (!folderPath || folderPath === '.' || folderPath === '') return;
-  let current = folderPath;
+  let current = folderPath.replace(/\\/g, '/');
   const visited = new Set();
   while (current && current !== '.' && !visited.has(current)) {
     visited.add(current);
-    const parent = path.dirname(current);
-    const name = path.basename(current);
+    const parent = path.posix.dirname(current);
+    const name = current.split('/').pop();
     const existing = db.getFolderByPath(current);
     if (!existing) {
       db.insertFolder({
         path: current,
-        parent_path: parent === '.' ? '' : parent,
+        parent_path: parent === '.' ? '' : (parent === current ? '' : parent),
         name,
         image_count: 0
       });
@@ -60,8 +61,8 @@ function ensureFolderChain(db, folderPath) {
  */
 async function applyChangesFromEvents(libraryPath, db, events) {
   try {
-    // Normalize helper to OS-specific separators to match DB records
-    const norm = (p) => path.normalize(p);
+    // Normalize helper: 统一使用正斜杠，与数据库记录格式一致
+    const norm = (p) => path.normalize(p).replace(/\\/g, '/');
 
     const affectedFolders = new Set();
     const results = { added: 0, modified: 0, deleted: 0, foldersAdded: 0, foldersRemoved: 0 };
@@ -86,13 +87,13 @@ async function applyChangesFromEvents(libraryPath, db, events) {
       try {
         const rel = norm(file);
         const full = path.join(libraryPath, rel);
-        
+
         // 检查文件是否存在
         if (!fs.existsSync(full)) {
           console.warn(`File not found, skipping: ${full}`);
           continue;
         }
-        
+
         const folder = path.dirname(rel);
         ensureFolderChain(db, folder);
         await processImage(full, libraryPath, db);
@@ -116,13 +117,13 @@ async function applyChangesFromEvents(libraryPath, db, events) {
       try {
         const rel = norm(file);
         const full = path.join(libraryPath, rel);
-        
+
         // 检查文件是否存在
         if (!fs.existsSync(full)) {
           console.warn(`File not found, skipping: ${full}`);
           continue;
         }
-        
+
         await processImage(full, libraryPath, db);
         const folder = path.dirname(rel);
         affectedFolders.add(folder);
@@ -191,27 +192,29 @@ async function applyChangesFromEvents(libraryPath, db, events) {
  */
 async function getFolderStructure(libraryPath) {
   const folders = [];
-  
+
   function scanDir(dirPath, parentPath = '') {
     const items = fs.readdirSync(dirPath, { withFileTypes: true });
-    
+
     for (const item of items) {
       if (item.isDirectory() && !item.name.startsWith('.')) {
         const fullPath = path.join(dirPath, item.name);
         const relativePath = path.relative(libraryPath, fullPath);
-        
+        const relativePathUnix = relativePath.replace(/\\/g, '/');
+        const parentUnix = (parentPath || '').replace(/\\/g, '/');
+
         folders.push({
-          path: relativePath,
-          parent_path: parentPath,
+          path: relativePathUnix,
+          parent_path: parentUnix,
           name: item.name,
           image_count: 0
         });
-        
-        scanDir(fullPath, relativePath);
+
+        scanDir(fullPath, relativePathUnix);
       }
     }
   }
-  
+
   scanDir(libraryPath);
   return folders;
 }
@@ -219,46 +222,84 @@ async function getFolderStructure(libraryPath) {
 /**
  * Process a single image file
  */
-async function processImage(imagePath, libraryPath, db) {
+/**
+ * Process a single image file
+ * @param {boolean} dryRun - If true, return data instead of inserting into DB (for batch write)
+ */
+async function processImage(imagePath, libraryPath, db, dryRun = false) {
   try {
     const relativePath = path.relative(libraryPath, imagePath);
     const filename = path.basename(imagePath);
-    const folder = path.dirname(relativePath);
-    
+    const folderRaw = path.dirname(relativePath);
+    const folder = folderRaw === '.' ? '' : folderRaw.replace(/\\/g, '/');
+
     // Check if image already exists in database
-    const existing = db.getImageByPath(relativePath);
+    const existing = db.getImageByPath(relativePath.replace(/\\/g, '/'));
     const currentHash = calculateFileHash(imagePath);
-    
-    // Skip if file hasn't changed
-    if (existing && existing.file_hash === currentHash) {
+
+    // For unchanged files, check whether thumbnails need upgrade/regeneration
+    let needRegenThumbs = false;
+    if (existing) {
+      const flypicDir = path.join(libraryPath, '.flypic');
+      const filenameOnly = (existing.thumbnail_path || '').replace(/\\/g, '/').split('/').pop();
+      if (filenameOnly) {
+        // Calculate sharded path
+        const hash = filenameOnly.replace(/\.[^/.]+$/, ""); // remove extension
+        const shard1 = hash.slice(0, 2);
+        // New structure: .flypic/thumbnails/ab/hash.webp
+        const expectedPath = path.join(flypicDir, 'thumbnails', shard1, filenameOnly);
+
+        // 需要重建的情况：新结构文件不存在
+        if (!fs.existsSync(expectedPath)) {
+          needRegenThumbs = true;
+        }
+      } else {
+        needRegenThumbs = true;
+      }
+    }
+
+    // Skip only if unchanged and thumbnails are up-to-date
+    if (existing && existing.file_hash === currentHash && !needRegenThumbs) {
       return { status: 'skipped', path: relativePath };
     }
-    
+
     // Get image metadata
     const metadata = await getImageMetadata(imagePath);
     if (!metadata) {
       return { status: 'error', path: relativePath, error: 'Failed to read metadata' };
     }
-    
-    // Generate thumbnails
+
+    // Generate thumbnails (also for unchanged files when thumbnails missing/outdated)
     const thumbnails = await generateImageThumbnails(imagePath, libraryPath);
-    
-    // Insert/update in database
-    db.insertImage({
-      path: relativePath,
+    const fileType = getFileType(imagePath);
+
+    // 使用缩略图的实际尺寸（对于视频/PSD，这是提取后的真实尺寸）
+    const actualWidth = thumbnails.width || metadata.width;
+    const actualHeight = thumbnails.height || metadata.height;
+
+    const imageData = {
+      path: relativePath.replace(/\\/g, '/'),
       filename: filename,
       folder: folder,
       size: metadata.size,
-      width: metadata.width,
-      height: metadata.height,
+      width: actualWidth,
+      height: actualHeight,
       format: metadata.format,
+      file_type: fileType,
       created_at: Math.floor(metadata.created_at),
       modified_at: Math.floor(metadata.modified_at),
       file_hash: currentHash,
       thumbnail_path: thumbnails.thumbnail_path,
       thumbnail_size: thumbnails.thumbnail_size
-    });
-    
+    };
+
+    if (dryRun) {
+      return { status: 'processed', path: relativePath, data: imageData };
+    }
+
+    // Insert/update in database
+    db.insertImage(imageData);
+
     return { status: 'processed', path: relativePath };
   } catch (error) {
     console.error('Error processing image:', imagePath, error);
@@ -268,60 +309,197 @@ async function processImage(imagePath, libraryPath, db) {
 
 /**
  * Scan library and update database
+ * @param {string} libraryPath - 素材库路径
+ * @param {object} db - 数据库实例
+ * @param {function} onProgress - 进度回调
+ * @param {string} libraryId - 素材库ID（用于停止控制）
+ * @param {Array} resumeFiles - 继续扫描时的待处理文件列表
  */
-async function scanLibrary(libraryPath, db, onProgress) {
+/**
+ * Scan library and update database
+ * @param {string} libraryPath - 素材库路径
+ * @param {object} db - 数据库实例
+ * @param {function} onProgress - 进度回调
+ * @param {string} libraryId - 素材库ID（用于停止控制）
+ * @param {Array} resumeFiles - 继续扫描时的待处理文件列表
+ */
+async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resumeFiles = null) {
   try {
-    // Get all image files
-    const files = await getAllImageFiles(libraryPath);
+    let files;
+
+    // 动态导入 p-limit
+    const pLimit = (await import('p-limit')).default;
+
+    // 根据 CPU 核心数动态调整并发数
+    const os = require('os');
+    const cpuCount = os.cpus().length;
+    // 默认并发数：核心数 - 1，最小 4，最大 16
+    const concurrency = Math.max(4, Math.min(16, cpuCount - 1));
+    const limit = pLimit(concurrency);
+
+    console.log(`🚀 Starting scan with concurrency: ${concurrency} (CPU cores: ${cpuCount})`);
+
+    if (resumeFiles && resumeFiles.length > 0) {
+      // 继续扫描：使用待处理文件列表
+      files = resumeFiles;
+      console.log(`▶️ Resuming scan with ${files.length} pending files`);
+    } else {
+      // 新扫描：获取所有文件
+      files = await getAllImageFiles(libraryPath);
+      console.log(`Found ${files.length} images in library`);
+
+      // Get folder structure
+      const folders = await getFolderStructure(libraryPath);
+      // 使用事务批量插入文件夹
+      const insertFolders = db.db.transaction((folders) => {
+        for (const folder of folders) db.insertFolder(folder);
+      });
+      insertFolders(folders);
+    }
+
     const total = files.length;
-    
-    console.log(`Found ${total} images in library`);
-    
-    // Get folder structure
-    const folders = await getFolderStructure(libraryPath);
-    folders.forEach(folder => db.insertFolder(folder));
-    
-    // Process images in batches
-    const batchSize = 50;
+
+    // 初始化扫描状态
+    if (libraryId) {
+      scanManager.startScan(libraryId, total);
+    }
+
     const results = {
       processed: 0,
       skipped: 0,
-      errors: 0
+      errors: 0,
+      stopped: false
     };
-    
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
-      
-      await Promise.all(
-        batch.map(file => processImage(file, libraryPath, db))
-      ).then(batchResults => {
-        batchResults.forEach(result => {
-          if (result.status === 'processed') results.processed++;
-          else if (result.status === 'skipped') results.skipped++;
-          else if (result.status === 'error') results.errors++;
-        });
-      });
-      
-      // Report progress
-      if (onProgress) {
-        onProgress({
-          total,
-          current: Math.min(i + batchSize, total),
-          percent: Math.round((Math.min(i + batchSize, total) / total) * 100),
-          currentFile: batch[batch.length - 1]
-        });
+
+    const startTime = Date.now();
+    let processedCount = 0;
+
+    // 批量写入缓冲区
+    let writeBuffer = [];
+    const WRITE_BATCH_SIZE = 100; // 每 100 条写入一次数据库
+
+    // 批量写入函数（事务）
+    const batchWrite = db.db.transaction((items) => {
+      for (const item of items) {
+        if (item.status === 'processed' && item.data) {
+          db.insertImage(item.data);
+        }
       }
-    }
-    
-    // Update folder image counts
-    folders.forEach(folder => {
-      db.updateFolderImageCount(folder.path);
     });
-    
+
+    // 处理单个文件的包装函数
+    const processFile = async (file) => {
+      // 检查是否需要停止
+      if (libraryId && scanManager.shouldStop(libraryId)) {
+        return { status: 'stopped', file };
+      }
+
+      try {
+        const result = await processImage(file, libraryPath, db, true); // true = dryRun (不直接写入DB)
+        return result;
+      } catch (error) {
+        return { status: 'error', path: file, error: error.message };
+      }
+    };
+
+    // 创建所有任务
+    const tasks = files.map(file => limit(async () => {
+      // 如果已经停止，直接返回
+      if (results.stopped) return;
+
+      const result = await processFile(file);
+
+      if (result.status === 'stopped') {
+        results.stopped = true;
+        return;
+      }
+
+      // 更新统计
+      if (result.status === 'processed') results.processed++;
+      else if (result.status === 'skipped') results.skipped++;
+      else if (result.status === 'error') results.errors++;
+
+      // 添加到写入缓冲区
+      if (result.status === 'processed') {
+        writeBuffer.push(result);
+
+        // 缓冲区满，执行批量写入
+        if (writeBuffer.length >= WRITE_BATCH_SIZE) {
+          batchWrite(writeBuffer);
+          writeBuffer = [];
+        }
+      }
+
+      processedCount++;
+
+      // 报告进度 (每完成 10 个文件报告一次，避免过于频繁)
+      if (processedCount % 10 === 0 || processedCount === total) {
+        const current = processedCount;
+
+        if (libraryId) {
+          scanManager.updateProgress(libraryId, current, total);
+        }
+
+        if (onProgress) {
+          const elapsed = Date.now() - startTime;
+          const avgTimePerImage = elapsed / current;
+          const remaining = total - current;
+          const estimatedTimeLeft = Math.round((remaining * avgTimePerImage) / 1000);
+
+          onProgress({
+            total,
+            current,
+            percent: Math.round((current / total) * 100),
+            currentFile: file,
+            estimatedTimeLeft,
+            canStop: true
+          });
+        }
+      }
+
+      // 性能日志
+      if (processedCount > 0 && processedCount % 1000 === 0) {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const speed = processedCount / elapsed;
+        console.log(`⚡ Performance: ${speed.toFixed(1)} images/sec, ${processedCount}/${total} completed`);
+      }
+    }));
+
+    // 等待所有任务完成
+    await Promise.all(tasks);
+
+    // 写入剩余的缓冲区数据
+    if (writeBuffer.length > 0) {
+      batchWrite(writeBuffer);
+      writeBuffer = [];
+    }
+
+    // 处理停止情况
+    if (results.stopped) {
+      const pendingFiles = files.slice(processedCount);
+      scanManager.stopScan(libraryId, pendingFiles);
+      console.log(`⏸️ Scan stopped at ${processedCount}/${total}, ${pendingFiles.length} files pending`);
+      return results;
+    }
+
+    const totalTime = (Date.now() - startTime) / 1000;
+    console.log(`✅ Scan completed in ${totalTime.toFixed(1)}s, speed: ${(total / totalTime).toFixed(1)} images/sec`);
+
+    // Update folder image counts
+    db.updateAllFolderCounts();
+
+    // 标记扫描完成
+    if (libraryId) {
+      scanManager.completeScan(libraryId);
+    }
+
     console.log('Scan complete:', results);
     return results;
   } catch (error) {
     console.error('Error scanning library:', error);
+    if (libraryId) {
+      scanManager.completeScan(libraryId);
+    }
     throw error;
   }
 }
@@ -329,84 +507,118 @@ async function scanLibrary(libraryPath, db, onProgress) {
 /**
  * Sync library (incremental scan)
  */
-async function syncLibrary(libraryPath, db, forceRebuildFolders = false) {
+async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgress = null) {
   try {
-    // Get all current files
+    const startTime = Date.now();
+
+    // Get all current files (统一使用正斜杠)
     const currentFiles = await getAllImageFiles(libraryPath);
     const currentPaths = new Set(
-      currentFiles.map(file => path.relative(libraryPath, file))
+      currentFiles.map(file => path.relative(libraryPath, file).replace(/\\/g, '/'))
     );
-    
-    // Get database files
+
+    // Get database files (已经是正斜杠格式)
     const dbImages = db.getAllImages();
-    const dbPaths = new Set(dbImages.map(img => img.path));
-    
+    const dbPaths = new Set(dbImages.map(img => (img.path || '').replace(/\\/g, '/')));
+
     // Find new, modified, and deleted files
     const toAdd = [...currentPaths].filter(p => !dbPaths.has(p));
     const toCheck = [...currentPaths].filter(p => dbPaths.has(p));
-    const toDelete = [...dbPaths].filter(p => !currentPaths.has(p));
-    
+    let toDelete = [...dbPaths].filter(p => !currentPaths.has(p));
+
     console.log(`Sync: ${toAdd.length} new, ${toCheck.length} to check, ${toDelete.length} deleted`);
-    
-    // Process new files
-    for (const relativePath of toAdd) {
-      const fullPath = path.join(libraryPath, relativePath);
-      await processImage(fullPath, libraryPath, db);
+
+    // 安全检查：如果要删除的文件数量超过数据库中文件的50%，可能是路径匹配问题
+    if (toDelete.length > 0 && dbImages.length > 0) {
+      const deleteRatio = toDelete.length / dbImages.length;
+      if (deleteRatio > 0.5 && toDelete.length > 10) {
+        console.warn(`⚠️ 安全检查：要删除 ${toDelete.length}/${dbImages.length} (${(deleteRatio * 100).toFixed(1)}%) 的文件，这可能是路径匹配问题，跳过删除操作`);
+        console.log('示例 currentPath:', [...currentPaths].slice(0, 3));
+        console.log('示例 dbPath:', [...dbPaths].slice(0, 3));
+        // 清空 toDelete，不执行删除
+        toDelete = [];
+      }
     }
-    
-    // Check modified files
-    for (const relativePath of toCheck) {
+
+    const total = toAdd.length + toDelete.length;
+    let processed = 0;
+
+    // Process new files in batches
+    const batchSize = 100;
+    for (let i = 0; i < toAdd.length; i += batchSize) {
+      const batch = toAdd.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map(relativePath => {
+          const fullPath = path.join(libraryPath, relativePath);
+          return processImage(fullPath, libraryPath, db);
+        })
+      );
+
+      processed += batch.length;
+
+      // 报告进度
+      if (onProgress && total > 0) {
+        onProgress({
+          total,
+          current: processed,
+          percent: Math.round((processed / total) * 100),
+          currentFile: batch[batch.length - 1]
+        });
+      }
+    }
+
+    // Check modified files in batches (只检查hash，不重新处理)
+    const modifiedCount = toCheck.filter(relativePath => {
       const fullPath = path.join(libraryPath, relativePath);
       const existing = db.getImageByPath(relativePath);
       const currentHash = calculateFileHash(fullPath);
-      
-      if (existing.file_hash !== currentHash) {
-        await processImage(fullPath, libraryPath, db);
-      }
-    }
-    
+      return existing.file_hash !== currentHash;
+    }).length;
+
+    console.log(`Found ${modifiedCount} modified files (skipped, hash unchanged)`);
+
     // Delete removed files
     for (const relativePath of toDelete) {
       db.deleteImage(relativePath);
       // TODO: Clean up thumbnail files
     }
-    
+
     // Rebuild folder structure if there are changes or forced
     if (toAdd.length > 0 || toDelete.length > 0 || forceRebuildFolders) {
       console.log('Rebuilding folder structure...');
-      
+
       // Get current folder structure from file system
       const currentFolders = await getFolderStructure(libraryPath);
-      
+
       // Get existing folders from database
       const dbFolders = db.getAllFolders();
       const dbFolderPaths = new Set(dbFolders.map(f => f.path));
-      
+
       // Find new and deleted folders
       const currentFolderPaths = new Set(currentFolders.map(f => f.path));
       const foldersToAdd = currentFolders.filter(f => !dbFolderPaths.has(f.path));
       const foldersToDelete = dbFolders.filter(f => !currentFolderPaths.has(f.path));
-      
+
       // Add new folders
       foldersToAdd.forEach(folder => {
         db.insertFolder(folder);
       });
-      
+
       // Delete removed folders
       foldersToDelete.forEach(folder => {
         db.deleteFolder(folder.path);
       });
-      
+
       console.log(`Folders: +${foldersToAdd.length}, -${foldersToDelete.length}`);
-      
+
       // Update folder image counts
       console.log('Updating folder image counts...');
       const affectedFolders = new Set();
-      
+
       // Collect all affected folders (including parent folders)
       [...toAdd, ...toDelete].forEach(relativePath => {
         let folderPath = path.dirname(relativePath);
-        
+
         // Add current folder and all parent folders
         while (folderPath && folderPath !== '.') {
           affectedFolders.add(folderPath);
@@ -415,18 +627,21 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false) {
           folderPath = parent;
         }
       });
-      
+
       // Update counts for all affected folders
       affectedFolders.forEach(folderPath => {
         db.updateFolderImageCount(folderPath);
       });
-      
+
       console.log(`Updated ${affectedFolders.size} folder counts`);
     }
-    
+
+    const totalTime = (Date.now() - startTime) / 1000;
+    console.log(`✅ Sync completed in ${totalTime.toFixed(1)}s`);
+
     return {
       added: toAdd.length,
-      modified: toCheck.length,
+      modified: modifiedCount,
       deleted: toDelete.length
     };
   } catch (error) {
@@ -435,11 +650,74 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false) {
   }
 }
 
+/**
+ * Quick sync - 只检查新增/删除，不检查修改（用于启动时快速检测）
+ */
+async function quickSync(libraryPath, db) {
+  const startTime = Date.now();
+
+  // 获取当前文件（统一使用正斜杠）
+  const currentFiles = await getAllImageFiles(libraryPath);
+  const currentPaths = new Set(
+    currentFiles.map(file => path.relative(libraryPath, file).replace(/\\/g, '/'))
+  );
+
+  // 获取数据库文件
+  const dbImages = db.getAllImages();
+  const dbPaths = new Set(dbImages.map(img => (img.path || '').replace(/\\/g, '/')));
+
+  // 只检查新增和删除（不检查修改）
+  const toAdd = [...currentPaths].filter(p => !dbPaths.has(p));
+  let toDelete = [...dbPaths].filter(p => !currentPaths.has(p));
+
+  // 安全检查
+  if (toDelete.length > 0 && dbImages.length > 0) {
+    const deleteRatio = toDelete.length / dbImages.length;
+    if (deleteRatio > 0.5 && toDelete.length > 10) {
+      console.warn(`⚠️ 安全检查：跳过删除 ${toDelete.length} 个文件`);
+      toDelete = [];
+    }
+  }
+
+  // 处理新增文件
+  for (const relativePath of toAdd) {
+    try {
+      const fullPath = path.join(libraryPath, relativePath);
+      // 确保文件夹链存在
+      const folder = path.dirname(relativePath).replace(/\\/g, '/');
+      if (folder && folder !== '.') {
+        ensureFolderChain(db, folder);
+      }
+      await processImage(fullPath, libraryPath, db);
+    } catch (err) {
+      console.error(`Error adding ${relativePath}:`, err.message);
+    }
+  }
+
+  // 删除已移除的文件
+  for (const relativePath of toDelete) {
+    db.deleteImage(relativePath);
+  }
+
+  // 如果有变化，更新所有文件夹的图片数量
+  if (toAdd.length > 0 || toDelete.length > 0) {
+    db.updateAllFolderCounts();
+  }
+
+  const elapsed = Date.now() - startTime;
+  if (toAdd.length > 0 || toDelete.length > 0) {
+    console.log(`Quick sync: +${toAdd.length} -${toDelete.length} (${elapsed}ms)`);
+  }
+
+  return { added: toAdd.length, deleted: toDelete.length };
+}
+
 module.exports = {
   getAllImageFiles,
   getFolderStructure,
   processImage,
   scanLibrary,
   syncLibrary,
+  quickSync,
   applyChangesFromEvents
 };

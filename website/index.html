@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlyPic - 飞牛NAS图片检索浏览应用</title>
-    <meta name="description" content="FlyPic 是一款专为飞牛 fnOS 设计的轻量、快速、稳定的图片检索浏览应用，支持10万+级别图片浏览，完全由 AI 开发。">
+    <title>FlyPic 飞图 - 飞牛NAS图片检索浏览应用</title>
+    <meta name="description" content="FlyPic 飞图是一款专为飞牛 fnOS 设计的轻量、快速、稳定的图片检索浏览应用，支持数十万级别图片流畅浏览，非侵入式设计，100% 开源免费。">
     <link rel="icon" type="image/png" href="https://eo.shikejk.com/flypic/icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
@@ -47,9 +47,9 @@
         <div class="container">
             <div class="hero-content">
                 <div class="hero-badge">🤖 完全由 AI 开发 · 专为飞牛 fnOS 设计</div>
-                <h1>轻量、快速、稳定的<br><span class="gradient-text">图像素材检索浏览应用</span></h1>
+                <h1>FlyPic 飞图<br><span class="gradient-text">轻量、快速、稳定的图像素材检索浏览应用</span></h1>
                 <p class="hero-desc">
-                    支持 <strong>10万+</strong> 级别图片流畅浏览，轻量快速。<strong>非侵入式设计</strong>，
+                    支持 <strong>数十万</strong> 级别图片流畅浏览，轻量快速。<strong>非侵入式设计</strong>，
                     不修改原文件结构。AI开发 <strong>100% 开源免费</strong>。
                 </p>
                 <div class="hero-actions">
@@ -61,7 +61,7 @@
                 </div>
                 <div class="hero-stats">
                     <div class="stat">
-                        <span class="stat-value">10万+</span>
+                        <span class="stat-value">数十万</span>
                         <span class="stat-label">图片支持</span>
                     </div>
                     <div class="stat">
@@ -71,6 +71,10 @@
                     <div class="stat">
                         <span class="stat-value">实时</span>
                         <span class="stat-label">文件监控</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value">FN Connect</span>
+                        <span class="stat-label">远程访问</span>
                     </div>
                 </div>
             </div>
@@ -136,7 +140,7 @@
                     <h3>固定行高瀑布流</h3>
                     <p>固定高度、宽度自适应的瀑布流布局，视觉整齐美观。支持缩略图大小调节（150-300px），适应不同浏览需求。</p>
                     <ul class="feature-list">
-                        <li>虚拟滚动技术，轻松浏览 10万+ 图片</li>
+                        <li>虚拟滚动技术，轻松浏览数十万图片</li>
                         <li>Web Worker 异步计算布局，不阻塞主线程</li>
                         <li>智能分批加载，按需请求数据</li>
                     </ul>
@@ -470,6 +474,28 @@
                 </div>
             </div>
 
+            <!-- 安装提示 -->
+            <div class="install-tips" style="margin-top: 40px; padding: 24px; background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border);">
+                <h4 style="margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    安装提示
+                </h4>
+                <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; color: var(--text-secondary);">
+                    <li style="display: flex; align-items: flex-start; gap: 8px;">
+                        <span style="color: var(--primary);">•</span>
+                        <span><strong>自定义端口</strong>：安装时可自定义应用端口（默认 15002），避免与其他应用冲突</span>
+                    </li>
+                    <li style="display: flex; align-items: flex-start; gap: 8px;">
+                        <span style="color: var(--primary);">•</span>
+                        <span><strong>素材库路径</strong>：添加素材库时需输入飞牛文件系统的完整路径，如 <code style="background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px;">/vol1/1000/图片库</code></span>
+                    </li>
+                    <li style="display: flex; align-items: flex-start; gap: 8px;">
+                        <span style="color: var(--primary);">•</span>
+                        <span><strong>文件夹权限</strong>：请确保应用对素材库文件夹有读取权限，可在飞牛应用设置中配置授权目录</span>
+                    </li>
+                </ul>
+            </div>
+
             <!-- 使用说明卡片 -->
             <div class="usage-guide">
                 <div class="section-header" style="margin-bottom: 40px;">
@@ -482,7 +508,7 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
                         </div>
                         <h4>添加素材库</h4>
-                        <p>点击左侧素材库下拉框，选择"添加新素材库"，输入名称和路径</p>
+                        <p>点击左侧素材库下拉框，选择"添加新素材库"，输入名称和飞牛文件路径（如 /vol1/1000/图片）</p>
                     </div>
                     <div class="usage-card">
                         <div class="usage-icon">

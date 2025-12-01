@@ -7,13 +7,21 @@ router.post('/start/:libraryId', (req, res) => {
     const { libraryId } = req.params;
     const fileWatcher = req.app.get('fileWatcher');
     const io = req.app.get('io');
-    
-    fileWatcher.watch(libraryId, io);
-    
-    res.json({ 
-      message: 'File watching started',
+
+    // 立即返回响应，让文件监控在后台启动
+    res.json({
+      message: 'File watching starting',
       libraryId,
       isWatching: true
+    });
+
+    // 异步启动监控（不阻塞响应）
+    setImmediate(() => {
+      try {
+        fileWatcher.watch(libraryId, io);
+      } catch (watchError) {
+        console.error(`Failed to start file watching for ${libraryId}:`, watchError.message);
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -25,10 +33,10 @@ router.post('/stop/:libraryId', (req, res) => {
   try {
     const { libraryId } = req.params;
     const fileWatcher = req.app.get('fileWatcher');
-    
+
     fileWatcher.unwatch(libraryId);
-    
-    res.json({ 
+
+    res.json({
       message: 'File watching stopped',
       libraryId,
       isWatching: false
@@ -43,10 +51,10 @@ router.get('/status/:libraryId', (req, res) => {
   try {
     const { libraryId } = req.params;
     const fileWatcher = req.app.get('fileWatcher');
-    
+
     const isWatching = fileWatcher.isWatching(libraryId);
-    
-    res.json({ 
+
+    res.json({
       libraryId,
       isWatching
     });
@@ -60,8 +68,8 @@ router.get('/list', (req, res) => {
   try {
     const fileWatcher = req.app.get('fileWatcher');
     const watchedLibraries = fileWatcher.getWatchedLibraries();
-    
-    res.json({ 
+
+    res.json({
       watchedLibraries,
       count: watchedLibraries.length
     });

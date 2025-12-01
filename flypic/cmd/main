@@ -8,8 +8,16 @@ export PATH=/var/apps/nodejs_v22/target/bin:$PATH
 
 # 数据目录
 DATA_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+
+# 读取用户配置的端口（默认 5002）
+PORT_CONF="${TRIM_PKGVAR}/port.conf"
+if [ -f "$PORT_CONF" ]; then
+    source "$PORT_CONF"
+fi
+APP_PORT="${APP_PORT:-15002}"
+
 # 启动命令
-CMD="DATA_DIR=${DATA_DIR} PORT=5002 node ${TRIM_APPDEST}/server/server.js"
+CMD="DATA_DIR=${DATA_DIR} PORT=${APP_PORT} node ${TRIM_APPDEST}/server/server.js"
 
 log_msg() {
     local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"

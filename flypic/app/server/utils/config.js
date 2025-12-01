@@ -2,6 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// 配置缓存
+let configCache = null;
+let configCacheTime = 0;
+const CONFIG_CACHE_TTL = 5000; // 5秒缓存
+
 /**
  * Get config directory based on environment
  */
@@ -34,7 +39,13 @@ function getConfigPath() {
 /**
  * Load configuration
  */
-function loadConfig() {
+function loadConfig(forceReload = false) {
+  // 检查缓存是否有效
+  const now = Date.now();
+  if (!forceReload && configCache && (now - configCacheTime) < CONFIG_CACHE_TTL) {
+    return configCache;
+  }
+  
   const configPath = getConfigPath();
   
   if (!fs.existsSync(configPath)) {
@@ -68,6 +79,10 @@ function loadConfig() {
       };
     }
     
+    // 更新缓存
+    configCache = config;
+    configCacheTime = now;
+    
     return config;
   } catch (error) {
     console.error('Error loading config:', error);
@@ -91,11 +106,22 @@ function saveConfig(config) {
   const configPath = getConfigPath();
   try {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    // 同步更新缓存
+    configCache = config;
+    configCacheTime = Date.now();
     return true;
   } catch (error) {
     console.error('Error saving config:', error);
     return false;
   }
+}
+
+/**
+ * 清除配置缓存（用于强制重新加载）
+ */
+function clearConfigCache() {
+  configCache = null;
+  configCacheTime = 0;
 }
 
 /**
@@ -195,6 +221,7 @@ module.exports = {
   getConfigPath,
   loadConfig,
   saveConfig,
+  clearConfigCache,
   addLibrary,
   removeLibrary,
   updateLibrary,
