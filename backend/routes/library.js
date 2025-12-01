@@ -178,6 +178,19 @@ router.post('/:id/set-current', async (req, res) => {
     const newLibrary = config.libraries.find(lib => lib.id === id);
     console.log(`[Switch] Switched to library: ${newLibrary?.name}`);
 
+    // 预热新数据库连接（避免第一个查询时才创建连接）
+    if (newLibrary) {
+      const db = dbPool.acquire(newLibrary.path);
+      // 执行一个简单查询来预热缓存
+      try {
+        db.db.prepare('SELECT 1').get();
+        console.log(`[Switch] Database connection warmed up`);
+      } catch (e) {
+        // 忽略预热错误
+      }
+      dbPool.release(newLibrary.path);
+    }
+
     res.json({ message: 'Current library set successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });

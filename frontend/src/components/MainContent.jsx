@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Pause, Play } from 'lucide-react';
 import useStore from '../store/useStore';
 import { imageAPI, scanAPI } from '../services/api';
+import imageLoadService from '../services/imageLoadService';
+import requestManager, { RequestType } from '../services/requestManager';
 import ImageWaterfall from './ImageWaterfall';
 import Dashboard from './Dashboard';
 
@@ -14,154 +16,177 @@ function MainContent() {
     setImages,
     setTotalImageCount,
     scanProgress,
-    scanStartTime
+    scanStartTime,
+    imageLoadingState
   } = useStore();
 
-  // 使用 ref 跟踪最新的请求
-  const loadingRequestRef = useRef(0);
+  // 使用 ref 跟踪最新的请求上下文
+  const currentRequestContextRef = useRef(null);
   // 文件夹切换防抖
-  const folderDebounceRef = useRef(null);
+  const debounceTimerRef = useRef(null);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
 
-  // 计算预估剩余时间（优先使用后端提供的estimatedTimeLeft）
-  const getEstimatedTime = () => {
-    if (!scanProgress || scanProgress.current === 0) {
-      return null;
-    }
-
-    // 优先使用后端提供的预估时间
-    if (scanProgress.estimatedTimeLeft !== undefined) {
-      const seconds = scanProgress.estimatedTimeLeft;
-      if (seconds < 1) return '即将完成';
-      if (seconds < 60) return `剩余约 ${seconds} 秒`;
-      if (seconds < 3600) {
-        const min = Math.floor(seconds / 60);
-        const sec = seconds % 60;
-        return sec > 0 ? `剩余约 ${min} 分 ${sec} 秒` : `剩余约 ${min} 分钟`;
-      }
-      const hrs = Math.floor(seconds / 3600);
-      const min = Math.floor((seconds % 3600) / 60);
-      return min > 0 ? `剩余约 ${hrs} 小时 ${min} 分钟` : `剩余约 ${hrs} 小时`;
-    }
-
-    // 降级：使用前端计算
-    if (!scanStartTime) return null;
-    const elapsed = Date.now() - scanStartTime;
-    const progress = scanProgress.current / scanProgress.total;
-    if (progress === 0) return null;
-
-    const remaining = (elapsed / progress) - elapsed;
-    const seconds = Math.ceil(remaining / 1000);
-
-    if (seconds < 60) return `剩余约 ${seconds} 秒`;
-    if (seconds < 3600) {
-      const min = Math.floor(seconds / 60);
-      const sec = seconds % 60;
-      return sec > 0 ? `剩余约 ${min} 分 ${sec} 秒` : `剩余约 ${min} 分钟`;
-    }
-    const hrs = Math.floor(seconds / 3600);
-    const min = Math.floor((seconds % 3600) / 60);
-    return min > 0 ? `剩余约 ${hrs} 小时 ${min} 分钟` : `剩余约 ${hrs} 小时`;
-  };
-
-  // 使用 ref 追踪上次的 libraryId，避免重复加载
+  // 使用 ref 追踪上次的 libraryId
   const lastLibraryIdRef = useRef(null);
   // 扫描控制
   const [scanPaused, setScanPaused] = useState(false);
   const [isStoppingOrResuming, setIsStoppingOrResuming] = useState(false);
 
-  useEffect(() => {
-    if (currentLibraryId) {
-      // 文件夹切换使用防抖（30ms），避免快速点击导致多次请求
-      if (folderDebounceRef.current) {
-        clearTimeout(folderDebounceRef.current);
-      }
-
-      folderDebounceRef.current = setTimeout(() => {
-        loadImages();
-      }, selectedFolder !== null ? 30 : 0); // 选择文件夹时防抖，清空时立即加载
-
-      // 只在切换素材库时加载文件夹和总数
-      if (lastLibraryIdRef.current !== currentLibraryId) {
-        loadFolders();
-        lastLibraryIdRef.current = currentLibraryId;
-      }
+  // 计算预估剩余时间
+  const getEstimatedTime = () => {
+    if (!scanProgress || scanProgress.current === 0) return null;
+    if (scanProgress.estimatedTimeLeft !== undefined) {
+      const seconds = scanProgress.estimatedTimeLeft;
+      if (seconds < 1) return '即将完成';
+      if (seconds < 60) return `剩余约 ${seconds} 秒`;
+      const min = Math.floor(seconds / 60);
+      return `剩余约 ${min} 分钟`;
     }
+    return null;
+  };
 
-    return () => {
-      if (folderDebounceRef.current) {
-        clearTimeout(folderDebounceRef.current);
-      }
-    };
-  }, [currentLibraryId, searchKeywords, filters, selectedFolder]);
+  // 取消当前请求（使用 requestManager 统一管理）
+  const cancelCurrentRequest = useCallback(() => {
+    // 取消所有 IMAGES 类型的请求
+    requestManager.cancelAll(RequestType.IMAGES);
+    currentRequestContextRef.current = null;
+  }, []);
 
+  // 加载图片 - 核心函数
   const loadImages = useCallback(async () => {
     if (!currentLibraryId) return;
 
-    // 递增请求ID
-    const requestId = ++loadingRequestRef.current;
-
-    // Optimization: If no folder selected and no search/filters, do NOT fetch images
-    // This prevents loading all images when showing Dashboard
+    // 如果没有选中文件夹且没有搜索条件，显示 Dashboard
     if (!selectedFolder && !searchKeywords && filters.formats.length === 0) {
-      if (requestId === loadingRequestRef.current) {
-        setImages([]); // Clear images to save memory
-        setIsLoadingImages(false);
-      }
+      setImages([]);
+      setIsLoadingImages(false);
+      useStore.getState().setImageLoadingState({
+        isLoading: false,
+        loadedCount: 0,
+        totalCount: 0,
+        hasMore: false
+      });
       return;
     }
 
+    // 暂停空闲加载并取消之前的所有请求（关键！）
+    imageLoadService.onUserActionStart();
+    cancelCurrentRequest();
+
+    // 使用 requestManager 创建请求上下文
+    const requestContext = requestManager.createRequest(RequestType.IMAGES);
+    currentRequestContextRef.current = requestContext;
+
+    // 设置加载状态
     setIsLoadingImages(true);
+    useStore.getState().setImageLoadingState({
+      isLoading: true,
+      loadedCount: 0,
+      totalCount: 0,
+      hasMore: false
+    });
 
     try {
-      const params = {
-        keywords: searchKeywords,
-        ...filters
-      };
+      // 构建请求参数
+      const params = { offset: 0, limit: 200 };
+      if (selectedFolder) params.folder = selectedFolder;
+      if (searchKeywords) params.keywords = searchKeywords;
+      if (filters.formats?.length > 0) params.formats = filters.formats.join(',');
 
-      // 只有选中了文件夹才添加 folder 参数
-      if (selectedFolder) {
-        params.folder = selectedFolder;
+      const startTime = Date.now();
+      console.log(`📂 Loading folder: ${selectedFolder || 'all'} [reqId=${requestContext.id}] [pending=${requestManager.getActiveCount(RequestType.IMAGES)}]`);
+
+      const response = await imageAPI.search(currentLibraryId, params, {
+        signal: requestContext.signal
+      });
+
+      const networkTime = Date.now() - startTime;
+
+      // 检查请求是否被取消（使用 requestManager 检查）
+      if (!requestManager.isValid(requestContext.id)) {
+        console.log(`⏹️ Request cancelled [reqId=${requestContext.id}]`);
+        return;
       }
 
-      const response = await imageAPI.search(currentLibraryId, params);
+      const { images, total, hasMore } = response.data;
+      console.log(`✅ Loaded ${images.length}/${total} images | network=${networkTime}ms [reqId=${requestContext.id}]`);
+      
+      // 标记请求完成
+      requestManager.complete(requestContext.id);
 
-      // 只有当这是最新的请求时才更新状态
-      if (requestId === loadingRequestRef.current) {
-        setImages(response.data.images);
+      // 更新状态
+      setImages(images);
+      useStore.getState().setImageLoadingState({
+        isLoading: false,
+        loadedCount: images.length,
+        totalCount: total || images.length,
+        hasMore: hasMore || false
+      });
 
-        // 无筛选条件时，同步更新总数
-        if (!selectedFolder && !searchKeywords) {
-          setTotalImageCount(response.data.images.length);
-        }
+      // 如果还有更多数据，恢复空闲加载
+      if (hasMore) {
+        imageLoadService.onUserActionEnd();
       }
+
     } catch (error) {
-      // 只有当这是最新的请求时才显示错误
-      if (requestId === loadingRequestRef.current) {
-        console.error('Error loading images:', error);
+      // 忽略取消错误
+      if (error.name === 'CanceledError' || error.name === 'AbortError') {
+        return;
       }
+      console.error('Error loading images:', error);
+      requestManager.error(requestContext.id);
     } finally {
-      if (requestId === loadingRequestRef.current) {
+      // 只有当请求仍然有效时才更新状态
+      if (requestManager.isValid(requestContext.id) || requestContext.status === 'completed') {
         setIsLoadingImages(false);
+        currentRequestContextRef.current = null;
       }
     }
-  }, [currentLibraryId, searchKeywords, filters, selectedFolder, setImages, setTotalImageCount]);
+  }, [currentLibraryId, searchKeywords, filters, selectedFolder, setImages, cancelCurrentRequest]);
 
-  const loadFolders = async () => {
+  // 监听文件夹变化
+  useEffect(() => {
     if (!currentLibraryId) return;
 
-    try {
-      const response = await imageAPI.getFolders(currentLibraryId);
-      useStore.getState().setFolders(response.data.folders);
-    } catch (error) {
-      console.error('Error loading folders:', error);
+    // 清除之前的防抖定时器
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
-  };
+
+    // 立即取消之前的请求（关键！）
+    cancelCurrentRequest();
+
+    // 立即清空图片，让 UI 快速响应
+    setImages([]);
+
+    // 使用防抖避免快速连续点击（150ms 足够过滤掉快速点击）
+    debounceTimerRef.current = setTimeout(() => {
+      loadImages();
+    }, 150);
+
+    // 更新 lastLibraryIdRef（文件夹加载已在 Sidebar 中处理）
+    lastLibraryIdRef.current = currentLibraryId;
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [currentLibraryId, searchKeywords, filters, selectedFolder, loadImages, cancelCurrentRequest, setImages]);
+
+  // 组件卸载时清理
+  useEffect(() => {
+    return () => {
+      cancelCurrentRequest();
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [cancelCurrentRequest]);
 
   // 停止扫描
   const handleStopScan = async () => {
     if (!currentLibraryId || isStoppingOrResuming) return;
-
     setIsStoppingOrResuming(true);
     try {
       await scanAPI.stop(currentLibraryId);
@@ -176,15 +201,11 @@ function MainContent() {
   // 继续扫描
   const handleResumeScan = async () => {
     if (!currentLibraryId || isStoppingOrResuming) return;
-
     setIsStoppingOrResuming(true);
     try {
       if (scanProgress?.needsRescan) {
-        // 应用重启后的恢复：使用增量同步
-        console.log('🔄 使用增量同步恢复扫描');
         await scanAPI.sync(currentLibraryId);
       } else {
-        // 正常继续扫描
         await scanAPI.resume(currentLibraryId);
       }
       setScanPaused(false);
@@ -195,107 +216,75 @@ function MainContent() {
     }
   };
 
-  // 当扫描进度变化时同步暂停状态
+  // 同步扫描暂停状态
   useEffect(() => {
     if (!scanProgress) {
       setScanPaused(false);
     } else if (scanProgress.isPaused) {
-      // 从 Sidebar/App 恢复的暂停状态
       setScanPaused(true);
     } else if (scanProgress.percent === 100) {
-      // 扫描完成时清除暂停状态
       setScanPaused(false);
     }
   }, [scanProgress]);
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
-      {/* Scan Progress - 只有当有进度数据时才显示 */}
+      {/* Scan Progress */}
       {scanProgress && (
         <div className={`p-4 border-b ${scanPaused
           ? 'bg-yellow-50 dark:bg-yellow-900 border-yellow-200 dark:border-yellow-700'
           : 'bg-blue-50 dark:bg-blue-900 border-blue-200 dark:border-blue-700'
-          }`}>
+        }`}>
           <div className="flex items-center justify-between mb-2">
-            <div className={`text-sm font-medium ${scanPaused
-              ? 'text-yellow-700 dark:text-yellow-300'
-              : 'text-blue-700 dark:text-blue-300'
-              }`}>
-              {scanPaused
-                ? '扫描已暂停'
-                : scanProgress?.status === 'preparing'
-                  ? '正在准备扫描...'
-                  : '正在扫描素材库，期间请勿操作，会影响扫描速度'
-              }
+            <div className={`text-sm font-medium ${scanPaused ? 'text-yellow-700 dark:text-yellow-300' : 'text-blue-700 dark:text-blue-300'}`}>
+              {scanPaused ? '扫描已暂停' : scanProgress?.status === 'preparing' ? '正在准备扫描...' : '正在扫描素材库'}
             </div>
             <div className="flex items-center gap-2">
-              <span className={`text-sm ${scanPaused
-                ? 'text-yellow-600 dark:text-yellow-400'
-                : 'text-blue-600 dark:text-blue-400'
-                }`}>
+              <span className={`text-sm ${scanPaused ? 'text-yellow-600' : 'text-blue-600'}`}>
                 {scanProgress?.percent || 0}%
               </span>
-              {/* 停止/继续按钮 */}
               {(scanProgress?.canStop || scanPaused) && (
                 <button
                   onClick={scanPaused ? handleResumeScan : handleStopScan}
                   disabled={isStoppingOrResuming}
-                  className={`p-1.5 rounded-md transition-colors ${scanPaused
-                    ? 'bg-green-500 hover:bg-green-600 text-white'
-                    : 'bg-yellow-500 hover:bg-yellow-600 text-white'
-                    } ${isStoppingOrResuming ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  title={scanPaused ? '继续扫描' : '暂停扫描'}
+                  className={`p-1.5 rounded-md ${scanPaused ? 'bg-green-500 hover:bg-green-600' : 'bg-yellow-500 hover:bg-yellow-600'} text-white`}
                 >
-                  {isStoppingOrResuming ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : scanPaused ? (
-                    <Play className="w-4 h-4" />
-                  ) : (
-                    <Pause className="w-4 h-4" />
-                  )}
+                  {scanPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                 </button>
               )}
             </div>
           </div>
-          <div className={`w-full rounded-full h-2 mb-2 ${scanPaused
-            ? 'bg-yellow-200 dark:bg-yellow-800'
-            : 'bg-blue-200 dark:bg-blue-800'
-            }`}>
+          <div className={`w-full rounded-full h-2 mb-2 ${scanPaused ? 'bg-yellow-200' : 'bg-blue-200'}`}>
             <div
-              className={`h-2 rounded-full transition-all duration-300 ${scanPaused
-                ? 'bg-yellow-500'
-                : scanProgress?.status === 'preparing'
-                  ? 'bg-blue-400 animate-pulse'
-                  : 'bg-blue-500'
-                }`}
+              className={`h-2 rounded-full transition-all ${scanPaused ? 'bg-yellow-500' : 'bg-blue-500'}`}
               style={{ width: `${scanProgress?.percent || 0}%` }}
             />
           </div>
-          <div className={`flex items-center justify-between text-xs ${scanPaused
-            ? 'text-yellow-600 dark:text-yellow-400'
-            : 'text-blue-600 dark:text-blue-400'
-            }`}>
-            <span>
-              {scanPaused
-                ? scanProgress?.needsRescan
-                  ? `上次扫描中断于 ${scanProgress?.current || 0} 张，点击继续完成`
-                  : `已处理 ${scanProgress?.current || 0} 张，剩余 ${scanProgress?.pendingCount || (scanProgress?.total - scanProgress?.current) || 0} 张待处理`
-                : scanProgress?.status === 'preparing'
-                  ? '正在初始化...'
-                  : `已处理 ${scanProgress?.current || 0} / ${scanProgress?.total || 0} 张图片`
-              }
-            </span>
-            <span>
-              {scanPaused
-                ? scanProgress?.needsRescan ? '需要继续' : '暂停中'
-                : (getEstimatedTime() || '扫描完成后将自动显示')
-              }
-            </span>
+          <div className={`text-xs ${scanPaused ? 'text-yellow-600' : 'text-blue-600'}`}>
+            已处理 {scanProgress?.current || 0} / {scanProgress?.total || 0} 张图片
+            {getEstimatedTime() && ` · ${getEstimatedTime()}`}
           </div>
         </div>
       )}
 
-      {/* Content Area */}
+      {/* Loading Progress */}
+      {imageLoadingState.hasMore && imageLoadingState.loadedCount > 0 && (
+        <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600 dark:text-gray-400">
+              已加载 {imageLoadingState.loadedCount} / {imageLoadingState.totalCount} 张
+            </span>
+            <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500"
+                style={{ width: `${(imageLoadingState.loadedCount / imageLoadingState.totalCount) * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
       <div className="flex-1 overflow-hidden">
         {(!selectedFolder && !searchKeywords && filters.formats.length === 0) ? (
           <Dashboard />

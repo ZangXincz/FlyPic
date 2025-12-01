@@ -83,6 +83,52 @@ class LibraryDatabase {
       -- 复合索引：优化文件夹+时间排序查询
       CREATE INDEX IF NOT EXISTS idx_folder_created ON images(folder, created_at DESC);
     `);
+
+    // Metadata table for tracking database modifications
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at INTEGER
+      )
+    `);
+
+    // Initialize last_modified if not exists
+    const lastModified = this.db.prepare('SELECT value FROM metadata WHERE key = ?').get('last_modified');
+    if (!lastModified) {
+      this.db.prepare('INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)').run('last_modified', Date.now().toString(), Date.now());
+    }
+  }
+
+  /**
+   * 更新数据库最后修改时间
+   */
+  updateLastModified() {
+    const now = Date.now();
+    this.db.prepare('INSERT OR REPLACE INTO metadata (key, value, updated_at) VALUES (?, ?, ?)').run('last_modified', now.toString(), now);
+    return now;
+  }
+
+  /**
+   * 获取数据库最后修改时间
+   */
+  getLastModified() {
+    const row = this.db.prepare('SELECT value FROM metadata WHERE key = ?').get('last_modified');
+    return row ? parseInt(row.value, 10) : Date.now();
+  }
+
+  /**
+   * 获取缓存元数据
+   */
+  getCacheMeta() {
+    const lastModified = this.getLastModified();
+    const imageCount = this.db.prepare('SELECT COUNT(*) as count FROM images').get();
+    const folderCount = this.db.prepare('SELECT COUNT(*) as count FROM folders').get();
+    return {
+      dbModifiedAt: lastModified,
+      totalImages: imageCount.count,
+      totalFolders: folderCount.count
+    };
   }
 
   // Image operations
@@ -92,7 +138,7 @@ class LibraryDatabase {
       (path, filename, folder, size, width, height, format, file_type, created_at, modified_at, file_hash, thumbnail_path, thumbnail_size, indexed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    return stmt.run(
+    const result = stmt.run(
       imageData.path,
       imageData.filename,
       imageData.folder,
@@ -108,6 +154,9 @@ class LibraryDatabase {
       imageData.thumbnail_size,
       Date.now()
     );
+    // 更新数据库修改时间
+    this.updateLastModified();
+    return result;
   }
 
   getImageByPath(imagePath) {
@@ -120,61 +169,126 @@ class LibraryDatabase {
     return stmt.all();
   }
 
-  searchImages(keywords, filters = {}) {
-    let query = 'SELECT * FROM images WHERE 1=1';
+  searchImages(keywords, filters = {}, pagination = null) {
+    let baseQuery = 'FROM images WHERE 1=1';
     const params = [];
 
     // Keyword search (AND logic)
     if (keywords && keywords.trim()) {
       const terms = keywords.trim().split(/\s+/);
       terms.forEach(term => {
-        query += ' AND filename LIKE ?';
+        baseQuery += ' AND filename LIKE ?';
         params.push(`%${term}%`);
       });
     }
 
     // Folder filter
     if (filters.folder) {
-      query += ' AND folder LIKE ?';
-      params.push(`${filters.folder}%`);
+      // 使用 OR 组合精确匹配和前缀匹配，包含子文件夹
+      baseQuery += ' AND (folder = ? OR folder LIKE ?)';
+      params.push(filters.folder, `${filters.folder}/%`);
     }
 
     // Format filter
     if (filters.formats && filters.formats.length > 0) {
       const placeholders = filters.formats.map(() => '?').join(',');
-      query += ` AND format IN (${placeholders})`;
+      baseQuery += ` AND format IN (${placeholders})`;
       params.push(...filters.formats);
     }
 
     // Size filter (in KB)
     if (filters.minSize) {
-      query += ' AND size >= ?';
+      baseQuery += ' AND size >= ?';
       params.push(filters.minSize * 1024);
     }
     if (filters.maxSize) {
-      query += ' AND size <= ?';
+      baseQuery += ' AND size <= ?';
       params.push(filters.maxSize * 1024);
     }
 
     // Date filter
     if (filters.startDate) {
-      query += ' AND created_at >= ?';
+      baseQuery += ' AND created_at >= ?';
       params.push(filters.startDate);
     }
     if (filters.endDate) {
-      query += ' AND created_at <= ?';
+      baseQuery += ' AND created_at <= ?';
       params.push(filters.endDate);
     }
 
-    query += ' ORDER BY created_at DESC';
+    // 如果需要分页
+    if (pagination && typeof pagination.offset === 'number' && typeof pagination.limit === 'number') {
+      const timings = {};
+      
+      // 先获取数据（快速）
+      const query = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+      const paginatedParams = [...params, pagination.limit, pagination.offset];
+      
+      let queryStart = Date.now();
+      const stmt = this.db.prepare(query);
+      const images = stmt.all(...paginatedParams);
+      timings.dataQuery = Date.now() - queryStart;
 
+      // 如果是第一页且结果数量小于 limit，说明没有更多数据，无需 COUNT
+      if (pagination.offset === 0 && images.length < pagination.limit) {
+        return {
+          images,
+          total: images.length,
+          offset: pagination.offset,
+          limit: pagination.limit,
+          hasMore: false
+        };
+      }
+
+      // 如果是文件夹查询，尝试从 folders 表获取 count（更快）
+      let total = 0;
+      queryStart = Date.now();
+      if (filters.folder && !keywords && !filters.formats?.length && !filters.minSize && !filters.maxSize && !filters.startDate && !filters.endDate) {
+        const folderRow = this.db.prepare('SELECT image_count FROM folders WHERE path = ?').get(filters.folder);
+        if (folderRow) {
+          total = folderRow.image_count;
+          timings.countSource = 'folders_table';
+        }
+      }
+      
+      // 如果无法从 folders 表获取，才执行 COUNT（较慢）
+      if (total === 0) {
+        const countStmt = this.db.prepare(`SELECT COUNT(*) as total ${baseQuery}`);
+        const countResult = countStmt.get(...params);
+        total = countResult.total;
+        timings.countSource = 'count_query';
+      }
+      timings.countQuery = Date.now() - queryStart;
+
+      // 性能日志
+      const totalTime = timings.dataQuery + timings.countQuery;
+      if (totalTime > 50) {
+        console.log(`[DB] searchImages: data=${timings.dataQuery}ms, count=${timings.countQuery}ms (${timings.countSource}), folder=${filters.folder || 'all'}`);
+      }
+
+      return {
+        images,
+        total,
+        offset: pagination.offset,
+        limit: pagination.limit,
+        hasMore: pagination.offset + images.length < total
+      };
+    }
+
+    // 无分页，返回所有结果（保持向后兼容）
+    const query = `SELECT * ${baseQuery} ORDER BY created_at DESC`;
     const stmt = this.db.prepare(query);
     return stmt.all(...params);
   }
 
   deleteImage(imagePath) {
     const stmt = this.db.prepare('DELETE FROM images WHERE path = ?');
-    return stmt.run(imagePath);
+    const result = stmt.run(imagePath);
+    // 更新数据库修改时间
+    if (result.changes > 0) {
+      this.updateLastModified();
+    }
+    return result;
   }
 
   // Update folder field for a specific image (by path)
@@ -216,7 +330,12 @@ class LibraryDatabase {
   deleteImagesByFolderPrefix(folderPath) {
     // 使用 folderPath/% 确保只匹配真正的子文件夹，避免误删同名前缀文件夹
     const stmt = this.db.prepare('DELETE FROM images WHERE folder = ? OR folder LIKE ?');
-    return stmt.run(folderPath, `${folderPath}/%`);
+    const result = stmt.run(folderPath, `${folderPath}/%`);
+    // 更新数据库修改时间
+    if (result.changes > 0) {
+      this.updateLastModified();
+    }
+    return result;
   }
 
   deleteFoldersByPrefix(folderPath) {

@@ -5,13 +5,14 @@ import { VariableSizeList as List } from 'react-window';
 import { Play, FileText, Palette, Music, File } from 'lucide-react';
 import useStore from '../store/useStore';
 import { imageAPI } from '../services/api';
+import imageLoadService from '../services/imageLoadService';
 import FileViewer from './FileViewer';
 
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
-const VIRTUAL_SCROLL_THRESHOLD = 500;
+const VIRTUAL_SCROLL_THRESHOLD = 100;
 
 // Web Worker 阈值：超过此数量使用 Worker 计算布局
-const WORKER_THRESHOLD = 200;
+const WORKER_THRESHOLD = 500;
 
 function ImageWaterfall() {
   const { 
@@ -24,7 +25,8 @@ function ImageWaterfall() {
     setSelectedImages,
     toggleImageSelection,
     clearSelection,
-    isResizingPanels
+    isResizingPanels,
+    imageLoadingState
   } = useStore();
   const containerRef = useRef(null);
   const listRef = useRef(null);
@@ -125,25 +127,44 @@ function ImageWaterfall() {
   // 是否使用 Worker 计算布局
   const useWorker = filteredImages.length > WORKER_THRESHOLD;
 
-  // 当图片数据变化时重置 Worker 状态（更可靠的重置方式）
-  const prevImagesLengthRef = useRef(0);
+  // 跟踪图片数据变化，用于增量计算判断
+  const prevImagesRef = useRef({ length: 0, firstId: null, libraryId: null });
+  const incrementalModeRef = useRef(false);
+  
   useEffect(() => {
-    // 图片列表从有到无或数量大幅变化时重置
-    const prevLen = prevImagesLengthRef.current;
+    const prevLen = prevImagesRef.current.length;
     const currLen = filteredImages.length;
+    const prevFirstId = prevImagesRef.current.firstId;
+    const currFirstId = filteredImages[0]?.id;
+    const prevLibraryId = prevImagesRef.current.libraryId;
     
-    if (prevLen > 0 && currLen === 0) {
-      // 图片被清空，重置 Worker 状态
+    // 判断是否需要重置
+    const shouldReset = 
+      (prevLen > 0 && currLen === 0) ||  // 图片被清空
+      (currFirstId !== prevFirstId) ||    // 第一张图片变了（切换文件夹/素材库）
+      (currentLibraryId !== prevLibraryId); // 素材库变了
+    
+    if (shouldReset) {
+      // 重置 Worker 状态
       setWorkerRows([]);
       requestIdRef.current = 0;
-    } else if (currLen > 0 && Math.abs(currLen - prevLen) > prevLen * 0.5) {
-      // 数量变化超过50%，可能是切换素材库，重置
-      setWorkerRows([]);
-      requestIdRef.current = 0;
+      incrementalModeRef.current = false;
+      
+      // 通知 Worker 重置缓存
+      if (workerRef.current) {
+        workerRef.current.postMessage({ reset: true, requestId: 0 });
+      }
+    } else if (currLen > prevLen) {
+      // 图片数量增加，可以使用增量模式
+      incrementalModeRef.current = true;
     }
     
-    prevImagesLengthRef.current = currLen;
-  }, [filteredImages.length]);
+    prevImagesRef.current = { 
+      length: currLen, 
+      firstId: currFirstId,
+      libraryId: currentLibraryId
+    };
+  }, [filteredImages, currentLibraryId]);
 
   // 初始化 Web Worker
   useEffect(() => {
@@ -180,11 +201,26 @@ function ImageWaterfall() {
     }
     
     const requestId = ++requestIdRef.current;
+    
+    // 只传输必要的字段，减少数据传输开销
+    // 对于大量图片，这可以显著减少序列化/反序列化时间
+    const minimalImages = filteredImages.map(img => ({
+      id: img.id,
+      width: img.width,
+      height: img.height,
+      filename: img.filename,
+      thumbnail_path: img.thumbnail_path,
+      path: img.path,
+      file_type: img.file_type,
+      format: img.format
+    }));
+    
     workerRef.current.postMessage({
-      images: filteredImages,
+      images: minimalImages,
       containerWidth,
       targetHeight: thumbnailHeight,
-      requestId
+      requestId,
+      incremental: incrementalModeRef.current
     });
   }, [filteredImages, containerWidth, thumbnailHeight, useWorker]);
 
@@ -303,10 +339,25 @@ function ImageWaterfall() {
     return rows[index][0].calculatedHeight + 28 + 32;
   }, [rows, thumbnailHeight]);
 
-  // 当行数据变化时，重置虚拟列表缓存
+  // 跟踪上次的行数，用于增量更新虚拟列表
+  const prevRowCountRef = useRef(0);
+  
+  // 当行数据变化时，智能更新虚拟列表缓存
   useEffect(() => {
     if (listRef.current && useVirtualScroll) {
-      listRef.current.resetAfterIndex(0);
+      const prevRowCount = prevRowCountRef.current;
+      const currRowCount = rows.length;
+      
+      if (currRowCount > prevRowCount && prevRowCount > 0) {
+        // 增量更新：只重置新增的行
+        // 从上一个最后一行开始重置（因为最后一行可能被重新计算）
+        listRef.current.resetAfterIndex(Math.max(0, prevRowCount - 1));
+      } else {
+        // 完全重置
+        listRef.current.resetAfterIndex(0);
+      }
+      
+      prevRowCountRef.current = currRowCount;
     }
   }, [rows, useVirtualScroll]);
 
@@ -478,12 +529,34 @@ function ImageWaterfall() {
             itemSize={getRowHeight}
             className="p-4"
             overscanCount={3}
+            onScroll={({ scrollOffset, scrollDirection }) => {
+              // 滚动到接近底部时触发加载更多
+              if (scrollDirection === 'forward' && imageLoadingState.hasMore && !imageLoadingState.isLoading) {
+                const totalHeight = rows.reduce((sum, _, i) => sum + getRowHeight(i), 0);
+                const scrollBottom = scrollOffset + (containerHeight || 600);
+                // 距离底部 500px 时触发加载
+                if (totalHeight - scrollBottom < 500) {
+                  imageLoadService.loadNextBatch();
+                }
+              }
+            }}
           >
             {renderRow}
           </List>
         ) : (
           /* 普通渲染模式（≤500张图片） */
-          <div className="h-full overflow-y-auto p-4">
+          <div 
+            className="h-full overflow-y-auto p-4"
+            onScroll={(e) => {
+              // 滚动到接近底部时触发加载更多
+              if (imageLoadingState.hasMore && !imageLoadingState.isLoading) {
+                const { scrollTop, scrollHeight, clientHeight } = e.target;
+                if (scrollHeight - scrollTop - clientHeight < 500) {
+                  imageLoadService.loadNextBatch();
+                }
+              }
+            }}
+          >
             <div className="space-y-8">
               {rows.map((row, rowIndex) => {
                 let flatIndexBase = 0;

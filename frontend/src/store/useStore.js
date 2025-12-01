@@ -24,6 +24,25 @@ const useStore = create((set, get) => ({
   setImages: (images) => set({ images, filteredImages: images }),
   setFilteredImages: (filteredImages) => set({ filteredImages }),
   setTotalImageCount: (count) => set({ totalImageCount: count }),
+  
+  // 图片加载状态（用于分批加载）
+  imageLoadingState: {
+    isLoading: false,
+    isIdleLoading: false,
+    loadedCount: 0,
+    totalCount: 0,
+    hasMore: false,
+    currentRequestId: null
+  },
+  setImageLoadingState: (state) => set((prev) => ({
+    imageLoadingState: { ...prev.imageLoadingState, ...state }
+  })),
+  
+  // 追加图片（用于分批加载）
+  appendImages: (newImages) => set((state) => ({
+    images: [...state.images, ...newImages],
+    filteredImages: [...state.filteredImages, ...newImages]
+  })),
 
   // Folders
   folders: [],

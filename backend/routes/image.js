@@ -7,10 +7,20 @@ const dbPool = require('../database/dbPool');
 const { generateThumbnail } = require('../utils/thumbnail');
 const { getLibrary } = require('../utils/config');
 
-// Get images with search and filters
+// 请求计数器（用于调试）
+let requestCounter = 0;
+let lastRequestTime = 0;
+
+// Get images with search and filters (supports pagination)
 router.get('/', (req, res) => {
+  const requestId = ++requestCounter;
+  const startTime = Date.now();
+  const timeSinceLastRequest = lastRequestTime ? startTime - lastRequestTime : 0;
+  lastRequestTime = startTime;
+  console.log(`[Image API #${requestId}] START folder=${req.query.folder || 'all'} offset=${req.query.offset || 0} | gap=${timeSinceLastRequest}ms`);
+  
   try {
-    const { libraryId, keywords, folder, formats, minSize, maxSize, startDate, endDate } = req.query;
+    const { libraryId, keywords, folder, formats, minSize, maxSize, startDate, endDate, offset, limit } = req.query;
 
     if (!libraryId) {
       return res.status(400).json({ error: 'Library ID is required' });
@@ -21,8 +31,10 @@ router.get('/', (req, res) => {
       return res.status(404).json({ error: 'Library not found' });
     }
 
+    const acquireStart = Date.now();
     // 使用连接池获取数据库连接
     const db = dbPool.acquire(library.path);
+    const acquireTime = Date.now() - acquireStart;
 
     try {
       const filters = {};
@@ -33,9 +45,36 @@ router.get('/', (req, res) => {
       if (startDate) filters.startDate = parseInt(startDate);
       if (endDate) filters.endDate = parseInt(endDate);
 
-      const images = db.searchImages(keywords || '', filters);
+      // 分页参数（可选）
+      let pagination = null;
+      if (offset !== undefined && limit !== undefined) {
+        pagination = {
+          offset: parseInt(offset, 10),
+          limit: parseInt(limit, 10)
+        };
+      }
 
-      res.json({ images });
+      const queryStart = Date.now();
+      const result = db.searchImages(keywords || '', filters, pagination);
+      const queryTime = Date.now() - queryStart;
+
+      const totalTime = Date.now() - startTime;
+      
+      // 性能日志
+      console.log(`[Image API #${requestId}] END folder=${folder || 'all'} | acquire=${acquireTime}ms | query=${queryTime}ms | total=${totalTime}ms | count=${pagination ? result.images.length : result.length}`);
+
+      // 如果使用分页，返回分页格式；否则保持向后兼容
+      if (pagination) {
+        res.json({
+          images: result.images,
+          total: result.total,
+          offset: result.offset,
+          limit: result.limit,
+          hasMore: result.hasMore
+        });
+      } else {
+        res.json({ images: result });
+      }
     } finally {
       // 释放连接
       dbPool.release(library.path);
@@ -45,8 +84,8 @@ router.get('/', (req, res) => {
   }
 });
 
-// Get total image count
-router.get('/count', (req, res) => {
+// Get cache metadata (database modification time, counts)
+router.get('/cache-meta', (req, res) => {
   try {
     const { libraryId } = req.query;
 
@@ -61,7 +100,42 @@ router.get('/count', (req, res) => {
 
     const db = dbPool.acquire(library.path);
     try {
+      const meta = db.getCacheMeta();
+      res.json(meta);
+    } finally {
+      dbPool.release(library.path);
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get total image count
+router.get('/count', (req, res) => {
+  const startTime = Date.now();
+  console.log(`[Image API] /count START`);
+  try {
+    const { libraryId } = req.query;
+
+    if (!libraryId) {
+      return res.status(400).json({ error: 'Library ID is required' });
+    }
+
+    const library = getLibrary(libraryId);
+    if (!library) {
+      return res.status(404).json({ error: 'Library not found' });
+    }
+
+    const acquireStart = Date.now();
+    const db = dbPool.acquire(library.path);
+    const acquireTime = Date.now() - acquireStart;
+    
+    try {
+      const queryStart = Date.now();
       const row = db.db.prepare('SELECT COUNT(*) as count FROM images').get();
+      const queryTime = Date.now() - queryStart;
+      const duration = Date.now() - startTime;
+      console.log(`[Image API] /count END | acquire=${acquireTime}ms | query=${queryTime}ms | total=${duration}ms | count=${row.count}`);
       res.json({ count: row.count });
     } finally {
       dbPool.release(library.path);
@@ -73,6 +147,8 @@ router.get('/count', (req, res) => {
 
 // Get folders
 router.get('/folders', (req, res) => {
+  const startTime = Date.now();
+  console.log(`[Image API] /folders START`);
   try {
     const { libraryId } = req.query;
 
@@ -86,10 +162,16 @@ router.get('/folders', (req, res) => {
     }
 
     // 使用连接池
+    const acquireStart = Date.now();
     const db = dbPool.acquire(library.path);
+    const acquireTime = Date.now() - acquireStart;
 
     try {
+      const queryStart = Date.now();
       const folders = db.getFolderTree();
+      const queryTime = Date.now() - queryStart;
+      const duration = Date.now() - startTime;
+      console.log(`[Image API] /folders END | acquire=${acquireTime}ms | query=${queryTime}ms | total=${duration}ms | count=${folders.length}`);
       res.json({ folders });
     } finally {
       dbPool.release(library.path);

@@ -15,15 +15,16 @@ export const libraryAPI = {
 
 // Image API
 export const imageAPI = {
-  search: (libraryId, params = {}) => {
+  search: (libraryId, params = {}, options = {}) => {
     const query = new URLSearchParams({
       libraryId,
       ...params
     });
-    return axios.get(`${API_BASE}/image?${query}`);
+    return axios.get(`${API_BASE}/image?${query}`, options);
   },
   getCount: (libraryId) => axios.get(`${API_BASE}/image/count?libraryId=${libraryId}`),
   getFolders: (libraryId) => axios.get(`${API_BASE}/image/folders?libraryId=${libraryId}`),
+  getCacheMeta: (libraryId) => axios.get(`${API_BASE}/image/cache-meta?libraryId=${libraryId}`),
   getThumbnailUrl: (libraryId, size, filename) => `${API_BASE}/image/thumbnail/${libraryId}/${size}/${filename}`,
   getOriginalUrl: (libraryId, path) => `${API_BASE}/image/original/${libraryId}/${path}`,
   openInExplorer: (libraryId, path) => axios.post(`${API_BASE}/image/${libraryId}/open-file`, { path })

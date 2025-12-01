@@ -1,14 +1,15 @@
-const chokidar = require('chokidar');
+const { Worker } = require('worker_threads');
 const path = require('path');
 const { getLibrary } = require('./config');
-const { syncLibrary, applyChangesFromEvents } = require('./scanner');
+const { applyChangesFromEvents } = require('./scanner');
 const dbPool = require('../database/dbPool');
 
 class FileWatcher {
   constructor() {
-    this.watchers = new Map(); // libraryId -> watcher
+    this.workers = new Map(); // libraryId -> Worker
     this.debounceTimers = new Map(); // libraryId -> { timer, forceRebuildFolders }
     this.changeBuffers = new Map(); // libraryId -> { filesAdded, filesChanged, filesRemoved, dirsAdded, dirsRemoved }
+    this.ioRef = null; // Socket.IO 引用
   }
 
   // 获取或创建变更缓冲区
@@ -36,10 +37,13 @@ class FileWatcher {
     );
   }
 
-  // 启动监控
+  // 启动监控（使用 Worker Thread，不阻塞主线程）
   watch(libraryId, io) {
+    // 保存 io 引用
+    this.ioRef = io;
+
     // 如果已经在监控，先停止
-    if (this.watchers.has(libraryId)) {
+    if (this.workers.has(libraryId)) {
       this.unwatch(libraryId);
     }
 
@@ -56,137 +60,149 @@ class FileWatcher {
     } catch (error) {
       const errorMsg = `Cannot access library path: ${library.path} - ${error.message}`;
       console.error(errorMsg);
-      console.error('提示：在飞牛 fnOS 上，请确保在应用设置中授予了文件夹访问权限');
       throw new Error(errorMsg);
     }
 
-    console.log(`Starting file watcher for library: ${library.name} (${library.path})`);
+    console.log(`[FileWatcher] Starting worker for: ${library.name} (${library.path})`);
 
-    // 监控所有文件（使用通配符）
-    const pattern = '**/*.*';
-
-    // 创建监控器（监控所有文件和文件夹）
-    const watcher = chokidar.watch([pattern, '**/'], {
-      cwd: library.path,
-      ignored: [
-        '**/node_modules/**',
-        '**/.git/**',
-        '**/.flypic/**', // 忽略自己的缓存目录
-        '**/.*' // 忽略隐藏文件
-      ],
-      persistent: true,
-      ignoreInitial: true, // 忽略初始扫描
-      usePolling: false,   // 不使用轮询，减少 CPU 占用
-      awaitWriteFinish: {
-        stabilityThreshold: 1000, // 文件稳定 1 秒后触发，确保复制完成
-        pollInterval: 200
+    // 创建 Worker Thread
+    const workerPath = path.join(__dirname, 'fileWatcherWorker.js');
+    const worker = new Worker(workerPath, {
+      workerData: {
+        libraryPath: library.path,
+        libraryName: library.name
       }
     });
 
-    // 防抖处理：多个文件变化合并为一次同步（自适应时长）
-    const debouncedSync = (forceRebuildFolders = false) => {
-      const buf = this._getBuffer(libraryId);
-      const changeCount = this._bufferCount(buf);
+    // 处理 Worker 消息
+    worker.on('message', (msg) => {
+      this._handleWorkerMessage(libraryId, library, msg);
+    });
 
-      // 清除之前的定时器
-      if (this.debounceTimers.has(libraryId)) {
-        const oldTimer = this.debounceTimers.get(libraryId);
-        clearTimeout(oldTimer.timer);
-        // 聚合 forceRebuildFolders 标记
-        forceRebuildFolders = forceRebuildFolders || oldTimer.forceRebuildFolders;
+    worker.on('error', (error) => {
+      console.error(`[FileWatcher] Worker error for ${library.name}:`, error);
+    });
+
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        console.error(`[FileWatcher] Worker exited with code ${code} for ${library.name}`);
       }
+      this.workers.delete(libraryId);
+    });
 
-      // 自适应防抖时间：更快响应
-      let debounceMs = 2000;
-      if (changeCount <= 1) debounceMs = 800;      // 单文件 0.8 秒
-      else if (changeCount <= 5) debounceMs = 1000; // 少量 1 秒
-      else if (changeCount <= 20) debounceMs = 1500;
-      else if (changeCount <= 100) debounceMs = 2000;
-      else debounceMs = 3000; // 大批量 3 秒
+    this.workers.set(libraryId, worker);
+  }
 
-      const timer = setTimeout(async () => {
-        const snapshot = this._getBuffer(libraryId);
-        // 清空缓冲区（开始新一轮累计）
-        this.changeBuffers.set(libraryId, {
-          filesAdded: new Set(),
-          filesChanged: new Set(),
-          filesRemoved: new Set(),
-          dirsAdded: new Set(),
-          dirsRemoved: new Set()
-        });
+  // 处理 Worker 发来的消息
+  _handleWorkerMessage(libraryId, library, msg) {
+    switch (msg.type) {
+      case 'add':
+        this._getBuffer(libraryId).filesAdded.add(msg.path);
+        this._debouncedSync(libraryId, library);
+        break;
+      case 'unlink':
+        this._getBuffer(libraryId).filesRemoved.add(msg.path);
+        this._debouncedSync(libraryId, library);
+        break;
+      case 'change':
+        this._getBuffer(libraryId).filesChanged.add(msg.path);
+        this._debouncedSync(libraryId, library);
+        break;
+      case 'addDir':
+        this._getBuffer(libraryId).dirsAdded.add(msg.path);
+        this._debouncedSync(libraryId, library, true);
+        break;
+      case 'unlinkDir':
+        this._getBuffer(libraryId).dirsRemoved.add(msg.path);
+        this._debouncedSync(libraryId, library, true);
+        break;
+      case 'ready':
+        console.log(`[FileWatcher] Ready for: ${library.name}`);
+        break;
+      case 'error':
+        console.error(`[FileWatcher] Error for ${library.name}:`, msg.message);
+        break;
+      case 'closed':
+        console.log(`[FileWatcher] Closed for: ${library.name}`);
+        break;
+    }
+  }
 
-        // 从连接池获取数据库连接
-        const db = dbPool.acquire(library.path);
+  // 防抖同步
+  _debouncedSync(libraryId, library, forceRebuildFolders = false) {
+    const buf = this._getBuffer(libraryId);
+    const changeCount = this._bufferCount(buf);
 
-        try {
-          const total = this._bufferCount(snapshot);
-          let results;
+    // 清除之前的定时器
+    if (this.debounceTimers.has(libraryId)) {
+      const oldTimer = this.debounceTimers.get(libraryId);
+      clearTimeout(oldTimer.timer);
+      forceRebuildFolders = forceRebuildFolders || oldTimer.forceRebuildFolders;
+    }
 
-          // 始终使用基于事件的快速同步（不再调用 syncLibrary）
-          results = await applyChangesFromEvents(library.path, db, {
-            filesAdded: Array.from(snapshot.filesAdded),
-            filesChanged: Array.from(snapshot.filesChanged),
-            filesRemoved: Array.from(snapshot.filesRemoved),
-            dirsAdded: Array.from(snapshot.dirsAdded),
-            dirsRemoved: Array.from(snapshot.dirsRemoved)
-          });
+    // 自适应防抖时间
+    let debounceMs = 2000;
+    if (changeCount <= 1) debounceMs = 800;
+    else if (changeCount <= 5) debounceMs = 1000;
+    else if (changeCount <= 20) debounceMs = 1500;
+    else if (changeCount <= 100) debounceMs = 2000;
+    else debounceMs = 3000;
 
-          // 通过 Socket.IO 通知前端
-          io.emit('scanComplete', { libraryId, results });
-          console.log(`Sync complete for ${library.name}:`, results);
-        } catch (error) {
-          console.error(`Sync error for ${library.name}:`, error);
-          io.emit('scanError', { libraryId, error: error.message });
-        } finally {
-          // 释放数据库连接（不关闭，复用）
-          dbPool.release(library.path);
-        }
-
-        this.debounceTimers.delete(libraryId);
-      }, debounceMs);
-
-      this.debounceTimers.set(libraryId, { timer, forceRebuildFolders });
-    };
-
-    // 监听文件和文件夹变化（写入缓冲，统一合并处理）
-    watcher
-      .on('add', (filePath) => {
-        this._getBuffer(libraryId).filesAdded.add(filePath);
-        debouncedSync();
-      })
-      .on('unlink', (filePath) => {
-        this._getBuffer(libraryId).filesRemoved.add(filePath);
-        debouncedSync();
-      })
-      .on('change', (filePath) => {
-        this._getBuffer(libraryId).filesChanged.add(filePath);
-        debouncedSync();
-      })
-      .on('addDir', (dirPath) => {
-        this._getBuffer(libraryId).dirsAdded.add(dirPath);
-        debouncedSync(true); // 强制重建文件夹结构
-      })
-      .on('unlinkDir', (dirPath) => {
-        this._getBuffer(libraryId).dirsRemoved.add(dirPath);
-        debouncedSync(true); // 强制重建文件夹结构
-      })
-      .on('error', (error) => {
-        console.error(`Watcher error for ${library.name}:`, error);
-      })
-      .on('ready', () => {
-        console.log(`File watcher ready for: ${library.name}`);
+    const timer = setTimeout(async () => {
+      const snapshot = this._getBuffer(libraryId);
+      // 清空缓冲区
+      this.changeBuffers.set(libraryId, {
+        filesAdded: new Set(),
+        filesChanged: new Set(),
+        filesRemoved: new Set(),
+        dirsAdded: new Set(),
+        dirsRemoved: new Set()
       });
 
-    this.watchers.set(libraryId, watcher);
+      const db = dbPool.acquire(library.path);
+
+      try {
+        const results = await applyChangesFromEvents(library.path, db, {
+          filesAdded: Array.from(snapshot.filesAdded),
+          filesChanged: Array.from(snapshot.filesChanged),
+          filesRemoved: Array.from(snapshot.filesRemoved),
+          dirsAdded: Array.from(snapshot.dirsAdded),
+          dirsRemoved: Array.from(snapshot.dirsRemoved)
+        });
+
+        if (this.ioRef) {
+          this.ioRef.emit('scanComplete', { libraryId, results });
+        }
+        console.log(`[FileWatcher] Sync complete for ${library.name}:`, results);
+      } catch (error) {
+        console.error(`[FileWatcher] Sync error for ${library.name}:`, error);
+        if (this.ioRef) {
+          this.ioRef.emit('scanError', { libraryId, error: error.message });
+        }
+      } finally {
+        dbPool.release(library.path);
+      }
+
+      this.debounceTimers.delete(libraryId);
+    }, debounceMs);
+
+    this.debounceTimers.set(libraryId, { timer, forceRebuildFolders });
   }
 
   // 停止监控
   unwatch(libraryId) {
-    const watcher = this.watchers.get(libraryId);
-    if (watcher) {
-      watcher.close();
-      this.watchers.delete(libraryId);
-      console.log(`Stopped file watcher for library: ${libraryId}`);
+    const worker = this.workers.get(libraryId);
+    if (worker) {
+      // 发送关闭命令给 Worker
+      worker.postMessage({ type: 'close' });
+      // 给 Worker 一些时间优雅关闭，然后强制终止
+      setTimeout(() => {
+        if (this.workers.has(libraryId)) {
+          worker.terminate();
+          this.workers.delete(libraryId);
+        }
+      }, 1000);
+      console.log(`[FileWatcher] Stopping worker for: ${libraryId}`);
     }
 
     // 清除防抖定时器
@@ -204,19 +220,19 @@ class FileWatcher {
 
   // 停止所有监控
   unwatchAll() {
-    for (const libraryId of this.watchers.keys()) {
+    for (const libraryId of this.workers.keys()) {
       this.unwatch(libraryId);
     }
   }
 
   // 获取监控状态
   isWatching(libraryId) {
-    return this.watchers.has(libraryId);
+    return this.workers.has(libraryId);
   }
 
   // 获取所有正在监控的库
   getWatchedLibraries() {
-    return Array.from(this.watchers.keys());
+    return Array.from(this.workers.keys());
   }
 }
 

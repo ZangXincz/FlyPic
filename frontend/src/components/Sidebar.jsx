@@ -2,6 +2,9 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Folder, Search, ChevronRight, ChevronDown, X, Trash2, ChevronsRight, ChevronsDown } from 'lucide-react';
 import useStore from '../store/useStore';
 import { libraryAPI, scanAPI, imageAPI } from '../services/api';
+import requestManager, { RequestType } from '../services/requestManager';
+import cacheService from '../services/cacheService';
+import imageLoadService from '../services/imageLoadService';
 
 // 检查素材库是否有暂停的扫描
 const checkPausedScan = async (libraryId) => {
@@ -153,25 +156,38 @@ function Sidebar() {
 
     setIsSwitching(true);
     try {
-      // 切换前清理当前素材库的状态
+      // 1. 暂停空闲加载并取消所有之前的请求
+      imageLoadService.onUserActionStart();
+      requestManager.cancelAllRequests();
+
+      // 2. 清理当前素材库的状态（立即响应）
       useStore.getState().setScanProgress(null);
       useStore.getState().setSelectedImage(null);
+      useStore.getState().setImages([]);
+      useStore.getState().setFolders([]);
+      useStore.getState().setImageLoadingState({
+        isLoading: false,
+        loadedCount: 0,
+        totalCount: 0,
+        hasMore: false
+      });
       setSelectedFolder(null);
 
-      // 并行执行：切换素材库 + 预加载数据
-      const [, foldersRes, imagesRes] = await Promise.all([
-        libraryAPI.setCurrent(libraryId),
+      // 3. 先切换素材库（确保后端数据库连接已切换）
+      await libraryAPI.setCurrent(libraryId);
+      
+      // 4. 然后并行加载文件夹和总数
+      const [foldersRes, countRes] = await Promise.all([
         imageAPI.getFolders(libraryId),
-        imageAPI.search(libraryId, {})
+        imageAPI.getCount(libraryId)
       ]);
 
-      // 更新状态
-      setCurrentLibrary(libraryId);
+      // 5. 更新状态（包括 currentLibraryId，这样其他组件才会响应）
       useStore.getState().setFolders(foldersRes.data.folders);
-      useStore.getState().setImages(imagesRes.data.images);
-      useStore.getState().setTotalImageCount(imagesRes.data.images.length);
+      useStore.getState().setTotalImageCount(countRes.data.count);
+      setCurrentLibrary(libraryId); // 最后才更新 currentLibraryId
 
-      // 后台检查新素材库是否有暂停的扫描（不阻塞主流程）
+      // 7. 后台检查新素材库是否有暂停的扫描（不阻塞主流程）
       checkPausedScan(libraryId).then(scanStatus => {
         if (scanStatus && scanStatus.status === 'paused') {
           if (scanStatus.needsRescan) {
@@ -199,6 +215,7 @@ function Sidebar() {
     } catch (error) {
       console.error('Error setting current library:', error);
       alert('切换素材库失败: ' + error.message);
+      useStore.getState().setImageLoadingState({ isLoading: false });
     } finally {
       setIsSwitching(false);
     }
@@ -371,6 +388,8 @@ function Sidebar() {
 
     // 如果是第一次点击（未选中），则选中
     if (selectedFolder !== folder.path) {
+      // 暂停空闲加载
+      imageLoadService.onUserActionStart();
       setSelectedFolder(folder.path);
     } else if (hasChildren) {
       // 如果已经选中，且有子文件夹，则展开/折叠

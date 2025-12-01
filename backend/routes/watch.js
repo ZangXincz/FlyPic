@@ -3,29 +3,28 @@ const router = express.Router();
 
 // Start watching a library
 router.post('/start/:libraryId', (req, res) => {
+  const startTime = Date.now();
   try {
     const { libraryId } = req.params;
     const fileWatcher = req.app.get('fileWatcher');
     const io = req.app.get('io');
 
-    // 尝试启动监控，如果失败则返回详细错误
-    try {
-      fileWatcher.watch(libraryId, io);
-      res.json({
-        message: 'File watching started',
-        libraryId,
-        isWatching: true
-      });
-    } catch (watchError) {
-      // 监控启动失败，但不应该导致整个请求失败
-      console.error(`Failed to start file watching for ${libraryId}:`, watchError.message);
-      res.status(200).json({
-        message: 'File watching could not be started',
-        libraryId,
-        isWatching: false,
-        error: watchError.message
-      });
-    }
+    // 立即返回响应，让文件监控在后台启动
+    res.json({
+      message: 'File watching starting',
+      libraryId,
+      isWatching: true
+    });
+
+    // 异步启动监控（不阻塞响应）
+    setImmediate(() => {
+      try {
+        fileWatcher.watch(libraryId, io);
+        console.log(`[Watch] Started in ${Date.now() - startTime}ms`);
+      } catch (watchError) {
+        console.error(`Failed to start file watching for ${libraryId}:`, watchError.message);
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
