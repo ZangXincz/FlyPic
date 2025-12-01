@@ -3,7 +3,6 @@ import { Folder, Search, ChevronRight, ChevronDown, X, Trash2, ChevronsRight, Ch
 import useStore from '../store/useStore';
 import { libraryAPI, scanAPI, imageAPI } from '../services/api';
 import requestManager, { RequestType } from '../services/requestManager';
-import cacheService from '../services/cacheService';
 import imageLoadService from '../services/imageLoadService';
 
 // 检查素材库是否有暂停的扫描

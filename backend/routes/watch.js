@@ -3,7 +3,6 @@ const router = express.Router();
 
 // Start watching a library
 router.post('/start/:libraryId', (req, res) => {
-  const startTime = Date.now();
   try {
     const { libraryId } = req.params;
     const fileWatcher = req.app.get('fileWatcher');
@@ -20,7 +19,6 @@ router.post('/start/:libraryId', (req, res) => {
     setImmediate(() => {
       try {
         fileWatcher.watch(libraryId, io);
-        console.log(`[Watch] Started in ${Date.now() - startTime}ms`);
       } catch (watchError) {
         console.error(`Failed to start file watching for ${libraryId}:`, watchError.message);
       }

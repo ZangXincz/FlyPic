@@ -49,13 +49,10 @@ const libraryRouter = require('./routes/library');
 const imageRouter = require('./routes/image');
 const scanRouter = require('./routes/scan');
 const watchRouter = require('./routes/watch');
-const cacheRouter = require('./routes/cache');
-
 app.use('/api/library', libraryRouter);
 app.use('/api/image', imageRouter);
 app.use('/api/scan', scanRouter);
 app.use('/api/watch', watchRouter);
-app.use('/api/cache', cacheRouter);
 
 // Serve static files (production)
 if (FRONTEND_DIST) {

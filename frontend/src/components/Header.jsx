@@ -52,12 +52,8 @@ function Header() {
 
     // 启动文件监控
     watchAPI.start(currentLibraryId)
-      .then(() => {
-        console.log('✅ 文件监控已启动（实时检测文件变化）');
-      })
       .catch(error => {
         console.error('启动文件监控失败:', error);
-        console.error('提示：在飞牛 fnOS 上，请确保在应用设置中授予了文件夹访问权限');
       });
 
     // 清理：关闭监控

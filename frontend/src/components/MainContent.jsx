@@ -14,9 +14,7 @@ function MainContent() {
     filters,
     selectedFolder,
     setImages,
-    setTotalImageCount,
     scanProgress,
-    scanStartTime,
     imageLoadingState
   } = useStore();
 
@@ -24,10 +22,6 @@ function MainContent() {
   const currentRequestContextRef = useRef(null);
   // 文件夹切换防抖
   const debounceTimerRef = useRef(null);
-  const [isLoadingImages, setIsLoadingImages] = useState(false);
-
-  // 使用 ref 追踪上次的 libraryId
-  const lastLibraryIdRef = useRef(null);
   // 扫描控制
   const [scanPaused, setScanPaused] = useState(false);
   const [isStoppingOrResuming, setIsStoppingOrResuming] = useState(false);
@@ -59,7 +53,6 @@ function MainContent() {
     // 如果没有选中文件夹且没有搜索条件，显示 Dashboard
     if (!selectedFolder && !searchKeywords && filters.formats.length === 0) {
       setImages([]);
-      setIsLoadingImages(false);
       useStore.getState().setImageLoadingState({
         isLoading: false,
         loadedCount: 0,
@@ -78,7 +71,6 @@ function MainContent() {
     currentRequestContextRef.current = requestContext;
 
     // 设置加载状态
-    setIsLoadingImages(true);
     useStore.getState().setImageLoadingState({
       isLoading: true,
       loadedCount: 0,
@@ -93,23 +85,16 @@ function MainContent() {
       if (searchKeywords) params.keywords = searchKeywords;
       if (filters.formats?.length > 0) params.formats = filters.formats.join(',');
 
-      const startTime = Date.now();
-      console.log(`📂 Loading folder: ${selectedFolder || 'all'} [reqId=${requestContext.id}] [pending=${requestManager.getActiveCount(RequestType.IMAGES)}]`);
-
       const response = await imageAPI.search(currentLibraryId, params, {
         signal: requestContext.signal
       });
 
-      const networkTime = Date.now() - startTime;
-
-      // 检查请求是否被取消（使用 requestManager 检查）
+      // 检查请求是否被取消
       if (!requestManager.isValid(requestContext.id)) {
-        console.log(`⏹️ Request cancelled [reqId=${requestContext.id}]`);
         return;
       }
 
       const { images, total, hasMore } = response.data;
-      console.log(`✅ Loaded ${images.length}/${total} images | network=${networkTime}ms [reqId=${requestContext.id}]`);
       
       // 标记请求完成
       requestManager.complete(requestContext.id);
@@ -138,7 +123,6 @@ function MainContent() {
     } finally {
       // 只有当请求仍然有效时才更新状态
       if (requestManager.isValid(requestContext.id) || requestContext.status === 'completed') {
-        setIsLoadingImages(false);
         currentRequestContextRef.current = null;
       }
     }
@@ -159,13 +143,10 @@ function MainContent() {
     // 立即清空图片，让 UI 快速响应
     setImages([]);
 
-    // 使用防抖避免快速连续点击（150ms 足够过滤掉快速点击）
+    // 使用防抖避免快速连续点击
     debounceTimerRef.current = setTimeout(() => {
       loadImages();
-    }, 150);
-
-    // 更新 lastLibraryIdRef（文件夹加载已在 Sidebar 中处理）
-    lastLibraryIdRef.current = currentLibraryId;
+    }, 50);
 
     return () => {
       if (debounceTimerRef.current) {

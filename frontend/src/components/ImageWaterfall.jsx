@@ -175,13 +175,10 @@ function ImageWaterfall() {
       );
       
       workerRef.current.onmessage = (e) => {
-        const { rows, requestId, duration, imageCount } = e.data;
+        const { rows, requestId } = e.data;
         // 只处理最新的请求结果
         if (requestId === requestIdRef.current) {
           setWorkerRows(rows);
-          if (imageCount > 500) {
-            console.log(`📐 Worker layout: ${imageCount} images in ${duration.toFixed(1)}ms`);
-          }
         }
       };
     }

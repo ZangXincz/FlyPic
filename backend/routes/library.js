@@ -111,8 +111,6 @@ router.delete('/:id', async (req, res) => {
     const fileWatcher = require('../utils/fileWatcher');
     const scanManager = require('../utils/scanManager');
 
-    console.log(`[Delete] Cleaning up library: ${library.name}`);
-
     // 1. 停止扫描并清理状态
     scanManager.clearState(id);
 
@@ -127,8 +125,6 @@ router.delete('/:id', async (req, res) => {
 
     // 删除索引
     removeLibrary(id);
-
-    console.log(`✅ Library removed: ${library.name}`);
 
     res.json({
       message: 'Library removed successfully',
@@ -154,21 +150,16 @@ router.post('/:id/set-current', async (req, res) => {
     if (oldLibraryId && oldLibraryId !== id) {
       const oldLibrary = config.libraries.find(lib => lib.id === oldLibraryId);
       if (oldLibrary) {
-        console.log(`[Switch] Cleaning up old library: ${oldLibrary.name}`);
-
-        // 1. 停止扫描（如果正在进行），但保留暂停状态以便恢复
+            // 1. 停止扫描（如果正在进行），但保留暂停状态以便恢复
         if (scanManager.isScanning(oldLibraryId)) {
           const state = scanManager.getState(oldLibraryId);
           if (state.abortController) {
             state.abortController.aborted = true;
           }
-          // 不调用 completeScan，让扫描自己暂停并保留待处理文件
-          console.log(`  ⏸️ Pausing scan (will preserve state)`);
         }
 
-        // 3. 关闭数据库连接
+        // 2. 关闭数据库连接
         dbPool.close(oldLibrary.path);
-        console.log(`  ⏹️ Closed database`);
       }
     }
 
@@ -176,7 +167,6 @@ router.post('/:id/set-current', async (req, res) => {
     setCurrentLibrary(id);
 
     const newLibrary = config.libraries.find(lib => lib.id === id);
-    console.log(`[Switch] Switched to library: ${newLibrary?.name}`);
 
     // 预热新数据库连接（避免第一个查询时才创建连接）
     if (newLibrary) {
@@ -184,7 +174,6 @@ router.post('/:id/set-current', async (req, res) => {
       // 执行一个简单查询来预热缓存
       try {
         db.db.prepare('SELECT 1').get();
-        console.log(`[Switch] Database connection warmed up`);
       } catch (e) {
         // 忽略预热错误
       }
@@ -228,18 +217,14 @@ router.post('/:id/release', (req, res) => {
       return res.status(404).json({ error: 'Library not found' });
     }
 
-    console.log(`[Release] Releasing resources for library: ${library.name}`);
-
     // 1. 关闭数据库连接
     const dbPool = require('../database/dbPool');
     dbPool.close(library.path);
-    console.log(`[Release] Database connection closed`);
 
     // 2. 停止文件监控
     const fileWatcher = req.app.get('fileWatcher');
     if (fileWatcher && fileWatcher.isWatching(id)) {
       fileWatcher.unwatch(id);
-      console.log(`[Release] File watcher stopped`);
     }
 
     res.json({
