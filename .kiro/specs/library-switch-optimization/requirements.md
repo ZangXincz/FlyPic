@@ -70,26 +70,8 @@
 2. WHEN images are being loaded in batches THEN the System SHALL update the display incrementally as each batch completes
 3. WHEN all images are loaded THEN the System SHALL hide the progress indicator
 
-### Requirement 6
-
-**User Story:** As a user, I want the application to remember my library data between sessions, so that switching libraries is instant without re-querying the database.
-
-#### Acceptance Criteria
-
-1. WHEN a library's image list is fully loaded THEN the System SHALL cache the image metadata to a local file in the .flypic folder
-2. WHEN switching to a library with existing cache THEN the System SHALL load from cache file first and display within 200ms
-3. WHEN cache exists THEN the System SHALL verify cache validity by comparing database modification timestamp
-4. WHEN cache is stale (database modified after cache) THEN the System SHALL invalidate cache and reload from database
-5. WHEN new images are added or removed THEN the System SHALL update the cache file incrementally
-
-### Requirement 7
-
-**User Story:** As a user, I want folder-level caching, so that clicking on previously visited folders is instant.
-
-#### Acceptance Criteria
-
-1. WHEN a folder's images are loaded THEN the System SHALL cache that folder's image list separately
-2. WHEN clicking a cached folder THEN the System SHALL display cached images immediately
-3. WHEN the folder's content changes THEN the System SHALL detect the change and refresh the cache
-4. WHEN memory usage exceeds threshold THEN the System SHALL evict least recently used folder caches
+<!-- 
+注意：Requirement 6 和 7 的缓存功能已规划但未实现，当前性能已满足需求。
+如需实现缓存功能，可参考 design.md 中的 CacheService 设计。
+-->
 

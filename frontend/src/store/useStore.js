@@ -28,11 +28,9 @@ const useStore = create((set, get) => ({
   // 图片加载状态（用于分批加载）
   imageLoadingState: {
     isLoading: false,
-    isIdleLoading: false,
     loadedCount: 0,
     totalCount: 0,
-    hasMore: false,
-    currentRequestId: null
+    hasMore: false
   },
   setImageLoadingState: (state) => set((prev) => ({
     imageLoadingState: { ...prev.imageLoadingState, ...state }

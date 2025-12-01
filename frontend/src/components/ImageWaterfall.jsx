@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { PhotoProvider, PhotoView } from 'react-photo-view';
+import { PhotoProvider } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
 import { VariableSizeList as List } from 'react-window';
 import { Play, FileText, Palette, Music, File } from 'lucide-react';
 import useStore from '../store/useStore';
 import { imageAPI } from '../services/api';
-import imageLoadService from '../services/imageLoadService';
+import requestManager, { RequestType } from '../services/requestManager';
 import FileViewer from './FileViewer';
 
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
@@ -26,7 +26,12 @@ function ImageWaterfall() {
     toggleImageSelection,
     clearSelection,
     isResizingPanels,
-    imageLoadingState
+    imageLoadingState,
+    selectedFolder,
+    searchKeywords,
+    filters,
+    appendImages,
+    setImageLoadingState
   } = useStore();
   const containerRef = useRef(null);
   const listRef = useRef(null);
@@ -38,6 +43,52 @@ function ImageWaterfall() {
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
   const [viewerFile, setViewerFile] = useState(null);
   const [workerRows, setWorkerRows] = useState([]); // Worker 计算的行
+
+  // 加载更多图片
+  const loadMoreImages = useCallback(async () => {
+    if (!currentLibraryId || !imageLoadingState.hasMore || imageLoadingState.isLoading) {
+      return;
+    }
+
+    const requestContext = requestManager.createRequest(RequestType.IMAGES);
+    setImageLoadingState({ isLoading: true });
+
+    try {
+      const params = { 
+        offset: imageLoadingState.loadedCount, 
+        limit: 200 
+      };
+      if (selectedFolder) params.folder = selectedFolder;
+      if (searchKeywords) params.keywords = searchKeywords;
+      if (filters.formats?.length > 0) params.formats = filters.formats.join(',');
+
+      const response = await imageAPI.search(currentLibraryId, params, {
+        signal: requestContext.signal
+      });
+
+      if (!requestManager.isValid(requestContext.id)) {
+        return;
+      }
+
+      const { images, total, hasMore } = response.data;
+      requestManager.complete(requestContext.id);
+
+      appendImages(images);
+      setImageLoadingState({
+        isLoading: false,
+        loadedCount: imageLoadingState.loadedCount + images.length,
+        totalCount: total,
+        hasMore: hasMore || false
+      });
+    } catch (error) {
+      if (error.name === 'CanceledError' || error.name === 'AbortError') {
+        return;
+      }
+      console.error('Error loading more images:', error);
+      requestManager.error(requestContext.id);
+      setImageLoadingState({ isLoading: false });
+    }
+  }, [currentLibraryId, imageLoadingState, selectedFolder, searchKeywords, filters, appendImages, setImageLoadingState]);
 
   // 监听容器宽度变化（使用 ResizeObserver + 去抖/阈值抑制）
   useEffect(() => {
@@ -533,7 +584,7 @@ function ImageWaterfall() {
                 const scrollBottom = scrollOffset + (containerHeight || 600);
                 // 距离底部 500px 时触发加载
                 if (totalHeight - scrollBottom < 500) {
-                  imageLoadService.loadNextBatch();
+                  loadMoreImages();
                 }
               }
             }}
@@ -549,7 +600,7 @@ function ImageWaterfall() {
               if (imageLoadingState.hasMore && !imageLoadingState.isLoading) {
                 const { scrollTop, scrollHeight, clientHeight } = e.target;
                 if (scrollHeight - scrollTop - clientHeight < 500) {
-                  imageLoadService.loadNextBatch();
+                  loadMoreImages();
                 }
               }
             }}

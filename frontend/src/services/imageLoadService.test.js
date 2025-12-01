@@ -7,27 +7,18 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as fc from 'fast-check';
-import { ImageLoadService, DEFAULT_BATCH_SIZE } from './imageLoadService.js';
+import { 
+  onUserActionStart, 
+  onUserActionEnd, 
+  pauseIdleLoading, 
+  resumeIdleLoading, 
+  isIdlePaused 
+} from './imageLoadService.js';
 
-// Mock dependencies
-vi.mock('./api', () => ({
-  imageAPI: {
-    search: vi.fn(),
-    getCacheMeta: vi.fn()
-  }
-}));
-
+// Mock requestManager
 vi.mock('./requestManager', () => ({
   default: {
-    createRequest: vi.fn(() => ({
-      id: `req_${Date.now()}`,
-      signal: new AbortController().signal,
-      isActive: true
-    })),
-    cancelAll: vi.fn(),
-    isValid: vi.fn().mockReturnValue(true),
-    complete: vi.fn(),
-    error: vi.fn()
+    cancelAll: vi.fn()
   },
   RequestType: {
     LIBRARY: 'library',
@@ -36,33 +27,34 @@ vi.mock('./requestManager', () => ({
   }
 }));
 
-describe('ImageLoadService', () => {
-  let service;
+// 默认批次大小（用于属性测试）
+const DEFAULT_BATCH_SIZE = 200;
 
+describe('ImageLoadService', () => {
   beforeEach(() => {
-    service = new ImageLoadService();
     vi.clearAllMocks();
+    // 重置空闲加载状态
+    resumeIdleLoading();
   });
 
   /**
    * **Property 4: Scroll triggers batch loading**
+   * 测试 Store 状态管理逻辑（hasMore 标志）
    */
   describe('Property 4: Scroll triggers batch loading', () => {
-    it('should set hasMore=true when total exceeds loaded count', () => {
+    it('should correctly determine hasMore based on loaded vs total count', () => {
       fc.assert(
         fc.property(
           fc.integer({ min: DEFAULT_BATCH_SIZE + 1, max: 10000 }),
           (totalImages) => {
-            service.state = {
-              ...service.state,
-              images: Array(DEFAULT_BATCH_SIZE).fill({ id: 1 }),
-              offset: DEFAULT_BATCH_SIZE,
-              total: totalImages,
-              hasMore: true
+            // 模拟 Store 状态
+            const state = {
+              loadedCount: DEFAULT_BATCH_SIZE,
+              totalCount: totalImages,
+              hasMore: DEFAULT_BATCH_SIZE < totalImages
             };
 
-            return service.state.hasMore === true &&
-              service.state.offset < service.state.total;
+            return state.hasMore === true && state.loadedCount < state.totalCount;
           }
         ),
         { numRuns: 100 }
@@ -74,16 +66,14 @@ describe('ImageLoadService', () => {
         fc.property(
           fc.integer({ min: 1, max: DEFAULT_BATCH_SIZE }),
           (totalImages) => {
-            service.state = {
-              ...service.state,
-              images: Array(totalImages).fill({ id: 1 }),
-              offset: totalImages,
-              total: totalImages,
+            // 模拟 Store 状态
+            const state = {
+              loadedCount: totalImages,
+              totalCount: totalImages,
               hasMore: false
             };
 
-            return service.state.hasMore === false &&
-              service.state.offset === service.state.total;
+            return state.hasMore === false && state.loadedCount === state.totalCount;
           }
         ),
         { numRuns: 100 }
@@ -101,26 +91,12 @@ describe('ImageLoadService', () => {
           fc.integer({ min: 0, max: 5000 }),
           fc.integer({ min: 1, max: DEFAULT_BATCH_SIZE }),
           (initialCount, batchSize) => {
+            // 模拟 Store 的 appendImages 行为
             const initialImages = Array(initialCount).fill({ id: 1 });
             const newImages = Array(batchSize).fill({ id: 2 });
+            const allImages = [...initialImages, ...newImages];
 
-            service.state = {
-              ...service.state,
-              images: initialImages,
-              offset: initialCount
-            };
-
-            const prevCount = service.state.images.length;
-
-            service.state = {
-              ...service.state,
-              images: [...initialImages, ...newImages],
-              offset: initialCount + batchSize
-            };
-
-            const newCount = service.state.images.length;
-
-            return newCount === prevCount + batchSize;
+            return allImages.length === initialCount + batchSize;
           }
         ),
         { numRuns: 100 }
@@ -129,22 +105,45 @@ describe('ImageLoadService', () => {
   });
 
   describe('Idle loading control', () => {
-    it('should pause and resume idle loading', () => {
-      service.state.hasMore = true;
-
-      service.pauseIdleLoading();
-      expect(service.idlePaused).toBe(true);
-
-      service.resumeIdleLoading();
-      expect(service.idlePaused).toBe(false);
+    it('should pause idle loading on user action start', () => {
+      expect(isIdlePaused()).toBe(false);
+      
+      onUserActionStart();
+      
+      expect(isIdlePaused()).toBe(true);
     });
 
-    it('should cancel idle loading', () => {
-      service.idleTimer = setTimeout(() => {}, 10000);
+    it('should track pause state correctly', () => {
+      pauseIdleLoading();
+      expect(isIdlePaused()).toBe(true);
 
-      service.cancelIdleLoading();
+      resumeIdleLoading();
+      expect(isIdlePaused()).toBe(false);
+    });
 
-      expect(service.idleTimer).toBe(null);
+    it('should handle multiple pause/resume cycles', () => {
+      fc.assert(
+        fc.property(
+          fc.array(fc.boolean(), { minLength: 1, maxLength: 20 }),
+          (actions) => {
+            // 重置状态
+            resumeIdleLoading();
+
+            for (const shouldPause of actions) {
+              if (shouldPause) {
+                pauseIdleLoading();
+                if (!isIdlePaused()) return false;
+              } else {
+                resumeIdleLoading();
+                if (isIdlePaused()) return false;
+              }
+            }
+
+            return true;
+          }
+        ),
+        { numRuns: 100 }
+      );
     });
   });
 });

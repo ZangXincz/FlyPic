@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Folder, Search, ChevronRight, ChevronDown, X, Trash2, ChevronsRight, ChevronsDown } from 'lucide-react';
 import useStore from '../store/useStore';
 import { libraryAPI, scanAPI, imageAPI } from '../services/api';
-import requestManager, { RequestType } from '../services/requestManager';
-import imageLoadService from '../services/imageLoadService';
+import requestManager from '../services/requestManager';
+import { onUserActionStart } from '../services/imageLoadService';
 
 // 检查素材库是否有暂停的扫描
 const checkPausedScan = async (libraryId) => {
@@ -156,7 +156,7 @@ function Sidebar() {
     setIsSwitching(true);
     try {
       // 1. 暂停空闲加载并取消所有之前的请求
-      imageLoadService.onUserActionStart();
+      onUserActionStart();
       requestManager.cancelAllRequests();
 
       // 2. 清理当前素材库的状态（立即响应）
@@ -388,7 +388,7 @@ function Sidebar() {
     // 如果是第一次点击（未选中），则选中
     if (selectedFolder !== folder.path) {
       // 暂停空闲加载
-      imageLoadService.onUserActionStart();
+      onUserActionStart();
       setSelectedFolder(folder.path);
     } else if (hasChildren) {
       // 如果已经选中，且有子文件夹，则展开/折叠

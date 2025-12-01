@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Pause, Play } from 'lucide-react';
 import useStore from '../store/useStore';
 import { imageAPI, scanAPI } from '../services/api';
-import imageLoadService from '../services/imageLoadService';
+import { onUserActionStart, onUserActionEnd } from '../services/imageLoadService';
 import requestManager, { RequestType } from '../services/requestManager';
 import ImageWaterfall from './ImageWaterfall';
 import Dashboard from './Dashboard';
@@ -63,7 +63,7 @@ function MainContent() {
     }
 
     // 暂停空闲加载并取消之前的所有请求（关键！）
-    imageLoadService.onUserActionStart();
+    onUserActionStart();
     cancelCurrentRequest();
 
     // 使用 requestManager 创建请求上下文
@@ -110,7 +110,7 @@ function MainContent() {
 
       // 如果还有更多数据，恢复空闲加载
       if (hasMore) {
-        imageLoadService.onUserActionEnd();
+        onUserActionEnd(hasMore);
       }
 
     } catch (error) {

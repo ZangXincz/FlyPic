@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const fs = require('fs');
-const path = require('path');
 const {
   loadConfig,
   addLibrary,
@@ -142,7 +141,6 @@ router.post('/:id/set-current', async (req, res) => {
     const { id } = req.params;
     const config = loadConfig();
     const dbPool = require('../database/dbPool');
-    const fileWatcher = require('../utils/fileWatcher');
     const scanManager = require('../utils/scanManager');
 
     // 获取旧的当前素材库
