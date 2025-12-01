@@ -1,0 +1,694 @@
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Sun, Moon, Search, Filter, Sliders, RefreshCw } from 'lucide-react';
+import useStore from '../store/useStore';
+import { libraryAPI, scanAPI, watchAPI } from '../services/api';
+
+function Header() {
+  const { 
+    theme, 
+    toggleTheme, 
+    searchKeywords,
+    thumbnailHeight,
+    images,
+    filteredImages,
+    selectedFolder,
+    currentLibraryId,
+    setSearchKeywords,
+    setThumbnailHeight,
+    setFilteredImages,
+    mobileView
+  } = useStore();
+  
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedFormats, setSelectedFormats] = useState([]);
+  const [selectedSizes, setSelectedSizes] = useState([]);
+  const [selectedOrientation, setSelectedOrientation] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [showMobileSettings, setShowMobileSettings] = useState(false);
+  const [localSearchValue, setLocalSearchValue] = useState(searchKeywords);
+  const searchDebounceRef = useRef(null);
+
+  // 检测移动端
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // 监听文件夹变化，自动清空筛选
+  useEffect(() => {
+    setSelectedFormats([]);
+    setSelectedSizes([]);
+    setSelectedOrientation('');
+  }, [selectedFolder]);
+
+  // 文件监控（默认启用，实时检测文件变化）
+  useEffect(() => {
+    if (!currentLibraryId) return;
+
+    // 启动文件监控
+    watchAPI.start(currentLibraryId)
+      .then(() => {
+        console.log('✅ 文件监控已启动（实时检测文件变化）');
+      })
+      .catch(error => {
+        console.error('启动文件监控失败:', error);
+        console.error('提示：在飞牛 fnOS 上，请确保在应用设置中授予了文件夹访问权限');
+      });
+
+    // 清理：关闭监控
+    return () => {
+      watchAPI.stop(currentLibraryId).catch(err => console.error('Stop watch error:', err));
+    };
+  }, [currentLibraryId]);
+
+  // 防抖搜索（300ms 延迟，减少请求频率）
+  const handleSearchChange = (value) => {
+    setLocalSearchValue(value);
+    
+    // 清除之前的定时器
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    
+    // 300ms 后触发实际搜索
+    searchDebounceRef.current = setTimeout(() => {
+      setSearchKeywords(value);
+    }, 300);
+  };
+
+  // 同步外部 searchKeywords 变化
+  useEffect(() => {
+    setLocalSearchValue(searchKeywords);
+  }, [searchKeywords]);
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, []);
+
+  // 智能计算文件大小范围
+  const calculateSizeRanges = (sizes) => {
+    if (sizes.length === 0) return [];
+    
+    const sorted = [...sizes].sort((a, b) => a - b);
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    
+    if (max - min < 10) {
+      return [formatSizeRange(min, max)];
+    }
+    
+    const rangeCount = 5;
+    const ranges = [];
+    const logMin = Math.log10(min || 1);
+    const logMax = Math.log10(max);
+    const logStep = (logMax - logMin) / rangeCount;
+    
+    for (let i = 0; i < rangeCount; i++) {
+      const rangeStart = Math.pow(10, logMin + i * logStep);
+      const rangeEnd = Math.pow(10, logMin + (i + 1) * logStep);
+      const hasImages = sorted.some(size => size >= rangeStart && size < rangeEnd);
+      
+      if (hasImages || i === rangeCount - 1) {
+        ranges.push(formatSizeRange(rangeStart, rangeEnd, i === rangeCount - 1));
+      }
+    }
+    
+    return ranges.filter(r => r);
+  };
+
+  // 格式化大小范围
+  const formatSizeRange = (start, end, isLast = false) => {
+    const formatSize = (kb) => {
+      const roundToFriendly = (num) => {
+        if (num < 10) return Math.round(num);
+        if (num < 100) return Math.round(num / 5) * 5;
+        if (num < 1000) return Math.round(num / 10) * 10;
+        return Math.round(num / 50) * 50;
+      };
+      
+      if (kb < 1) return `${roundToFriendly(kb * 1024)}B`;
+      if (kb < 1024) return `${roundToFriendly(kb)}KB`;
+      if (kb < 1024 * 1024) return `${roundToFriendly(kb / 1024)}MB`;
+      return `${roundToFriendly(kb / (1024 * 1024))}GB`;
+    };
+    
+    return isLast ? `> ${formatSize(start)}` : `${formatSize(start)} - ${formatSize(end)}`;
+  };
+
+  // 解析大小字符串
+  const parseSizeToKB = (sizeStr) => {
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)(B|KB|MB|GB)$/);
+    if (!match) return 0;
+    const value = parseFloat(match[1]);
+    const unit = match[2];
+    switch (unit) {
+      case 'B': return value / 1024;
+      case 'KB': return value;
+      case 'MB': return value * 1024;
+      case 'GB': return value * 1024 * 1024;
+      default: return 0;
+    }
+  };
+
+  // 匹配大小范围
+  const matchSizeRange = (sizeKB, range) => {
+    if (range.startsWith('>')) {
+      const minStr = range.substring(1).trim();
+      const minKB = parseSizeToKB(minStr);
+      return sizeKB >= minKB;
+    } else if (range.includes(' - ')) {
+      const [minStr, maxStr] = range.split(' - ').map(s => s.trim());
+      const minKB = parseSizeToKB(minStr);
+      const maxKB = parseSizeToKB(maxStr);
+      return sizeKB >= minKB && sizeKB < maxKB;
+    }
+    return false;
+  };
+
+  // 分析当前文件夹的所有图片，生成可选项（只在images变化时计算一次）
+  const filterOptions = useMemo(() => {
+    if (images.length === 0) {
+      return { formats: [], sizes: [], hasHorizontal: false, hasVertical: false };
+    }
+
+    const formats = new Set();
+    const sizes = [];
+    let hasHorizontal = false;
+    let hasVertical = false;
+
+    images.forEach(img => {
+      // 格式
+      if (img.format) {
+        formats.add(img.format.toLowerCase());
+      }
+      // 文件大小
+      sizes.push(img.size / 1024);
+      // 横竖图
+      if (img.width > img.height) hasHorizontal = true;
+      if (img.height > img.width) hasVertical = true;
+    });
+
+    // 计算文件大小范围
+    const sizeRanges = calculateSizeRanges(sizes);
+
+    return {
+      formats: Array.from(formats).sort(),
+      sizes: sizeRanges,
+      hasHorizontal,
+      hasVertical
+    };
+  }, [images]);
+
+  // 使用 useMemo 缓存筛选结果，避免重复计算
+  const filteredResult = useMemo(() => {
+    // 如果没有任何筛选条件，直接返回原始图片
+    if (selectedFormats.length === 0 && 
+        selectedSizes.length === 0 && 
+        !selectedOrientation) {
+      return images;
+    }
+
+    // 预先转换为 Set 以提高查找性能
+    const formatSet = new Set(selectedFormats);
+    const sizeSet = new Set(selectedSizes);
+
+    return images.filter(img => {
+      // 格式筛选
+      if (formatSet.size > 0) {
+        if (!formatSet.has(img.format?.toLowerCase())) {
+          return false;
+        }
+      }
+
+      // 文件大小筛选
+      if (sizeSet.size > 0) {
+        const sizeKB = img.size / 1024;
+        let matchesSize = false;
+        
+        for (const range of sizeSet) {
+          if (matchSizeRange(sizeKB, range)) {
+            matchesSize = true;
+            break;
+          }
+        }
+        
+        if (!matchesSize) return false;
+      }
+
+      // 横竖图筛选
+      if (selectedOrientation === 'horizontal') {
+        if (img.width <= img.height) return false;
+      } else if (selectedOrientation === 'vertical') {
+        if (img.height <= img.width) return false;
+      }
+
+      return true;
+    });
+  }, [images, selectedFormats, selectedSizes, selectedOrientation]);
+
+  // 更新 filteredImages
+  useEffect(() => {
+    setFilteredImages(filteredResult);
+  }, [filteredResult, setFilteredImages]);
+
+  // 切换选项
+  const toggleFormat = (format) => {
+    setSelectedFormats(prev => 
+      prev.includes(format) ? prev.filter(f => f !== format) : [...prev, format]
+    );
+  };
+
+  const toggleSize = (size) => {
+    setSelectedSizes(prev => 
+      prev.includes(size) ? prev.filter(s => s !== size) : [...prev, size]
+    );
+  };
+
+  const toggleOrientation = (orientation) => {
+    setSelectedOrientation(prev => prev === orientation ? '' : orientation);
+  };
+
+  // 清除筛选
+  const clearFilters = () => {
+    setSelectedFormats([]);
+    setSelectedSizes([]);
+    setSelectedOrientation('');
+  };
+
+  const handleThemeToggle = async () => {
+    toggleTheme();
+    try {
+      await libraryAPI.updateTheme(theme === 'light' ? 'dark' : 'light');
+    } catch (error) {
+      console.error('Error saving theme:', error);
+    }
+  };
+
+  const handleThumbnailHeightChange = async (height) => {
+    setThumbnailHeight(height);
+    try {
+      await libraryAPI.updatePreferences({ thumbnailHeight: height });
+    } catch (error) {
+      console.error('Error saving preferences:', error);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!currentLibraryId || isRefreshing) return;
+    
+    setIsRefreshing(true);
+    try {
+      await scanAPI.sync(currentLibraryId);
+      // Socket.IO 会触发更新
+    } catch (error) {
+      console.error('Error refreshing:', error);
+      alert('刷新失败: ' + error.message);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // 从 filterOptions 中提取可用选项
+  const availableFormats = filterOptions.formats;
+  const availableSizes = filterOptions.sizes.map(size => ({ label: size }));
+  const availableOrientations = [
+    { value: 'horizontal', label: '横图' },
+    { value: 'vertical', label: '竖图' }
+  ].filter(o => 
+    (o.value === 'horizontal' && filterOptions.hasHorizontal) ||
+    (o.value === 'vertical' && filterOptions.hasVertical)
+  );
+
+  // 移动端布局
+  if (isMobile) {
+    // 文件夹视图不显示搜索和筛选
+    const showSearch = mobileView !== 'sidebar';
+    
+    return (
+      <header className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        {/* 顶部栏 */}
+        <div className="h-14 flex items-center justify-between px-4">
+          <h1 className="text-lg font-bold text-gray-900 dark:text-white">FlyPic</h1>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={!currentLibraryId || isRefreshing}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-5 h-5 text-gray-700 dark:text-gray-300 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            
+            <button
+              onClick={() => setShowMobileSettings(!showMobileSettings)}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              <Sliders className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            </button>
+            
+            <button
+              onClick={handleThemeToggle}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              {theme === 'light' ? (
+                <Moon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              ) : (
+                <Sun className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              )}
+            </button>
+          </div>
+        </div>
+        
+        {/* 搜索栏（仅在图片和详情视图显示） */}
+        {showSearch && (
+          <div className="px-4 pb-3">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="搜索图片..."
+                  value={searchKeywords}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                />
+              </div>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`p-2 border rounded-lg ${
+                  selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/20'
+                    : 'border-gray-300 dark:border-gray-600'
+                }`}
+              >
+                <Filter className={`w-5 h-5 ${
+                  selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                    ? 'text-blue-600 dark:text-blue-300'
+                    : 'text-gray-600 dark:text-gray-400'
+                }`} />
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {/* 移动端设置面板 */}
+        {showMobileSettings && (
+          <div className="px-4 pb-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">缩略图大小</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">{thumbnailHeight}px</span>
+              </div>
+              <input
+                type="range"
+                min="150"
+                max="300"
+                value={thumbnailHeight}
+                onChange={(e) => handleThumbnailHeightChange(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((thumbnailHeight - 150) / 150) * 100}%, #e5e7eb ${((thumbnailHeight - 150) / 150) * 100}%, #e5e7eb 100%)`
+                }}
+              />
+            </div>
+          </div>
+        )}
+        
+        {/* 筛选面板（仅在图片和详情视图显示） */}
+        {showSearch && showFilters && (
+          <div className="px-4 pb-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">筛选条件</span>
+              <button
+                onClick={clearFilters}
+                className="text-xs text-blue-500"
+              >
+                清除全部
+              </button>
+            </div>
+            
+            {/* 格式筛选 */}
+            <div className="mb-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">格式</div>
+              <div className="flex flex-wrap gap-2">
+                {availableFormats.map(format => (
+                  <button
+                    key={format}
+                    onClick={() => toggleFormat(format)}
+                    className={`px-3 py-1 text-xs rounded-full ${
+                      selectedFormats.includes(format)
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* 尺寸筛选 */}
+            <div className="mb-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">尺寸</div>
+              <div className="flex flex-wrap gap-2">
+                {availableSizes.map(size => (
+                  <button
+                    key={size.label}
+                    onClick={() => toggleSize(size.label)}
+                    className={`px-3 py-1 text-xs rounded-full ${
+                      selectedSizes.includes(size.label)
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    {size.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* 方向筛选 */}
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">方向</div>
+              <div className="flex flex-wrap gap-2">
+                {availableOrientations.map(orientation => (
+                  <button
+                    key={orientation.value}
+                    onClick={() => toggleOrientation(orientation.value)}
+                    className={`px-3 py-1 text-xs rounded-full ${
+                      selectedOrientation === orientation.value
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    {orientation.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </header>
+    );
+  }
+
+  // 桌面端布局
+  return (
+    <header className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div className="h-14 flex items-center justify-between px-6">
+        <div className="flex-shrink-0">
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">FlyPic</h1>
+          <p className="text-xs text-gray-500 dark:text-gray-400">轻量快速的图片素材库管理</p>
+        </div>
+        
+        {/* 搜索栏 */}
+        <div className="flex-1 max-w-2xl mx-6 flex items-center gap-3">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="搜索图片... (多个关键词用空格分隔，即时搜索)"
+              value={localSearchValue}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`relative p-2 border rounded-lg transition-colors ${
+              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-500/20 hover:bg-blue-100 dark:hover:bg-blue-500/30'
+                : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+            title={
+              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                ? '筛选（已启用）'
+                : '筛选'
+            }
+          >
+            <Filter className={`w-5 h-5 ${
+              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                ? 'text-blue-600 dark:text-blue-300'
+                : 'text-gray-600 dark:text-gray-400'
+            }`} />
+            {(selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation) && (
+              <span 
+                className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full" 
+                style={{ backgroundColor: '#3b82f6' }}
+              ></span>
+            )}
+          </button>
+        </div>
+
+        {/* 缩略图大小滑块 */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <Sliders className="w-4 h-4 text-gray-500" />
+          <input
+            type="range"
+            min="150"
+            max="300"
+            value={thumbnailHeight}
+            onChange={(e) => handleThumbnailHeightChange(parseInt(e.target.value))}
+            className="w-32"
+          />
+          <span className="text-sm text-gray-600 dark:text-gray-400 w-12">{thumbnailHeight}px</span>
+          
+          <button
+            onClick={handleRefresh}
+            disabled={!currentLibraryId || isRefreshing}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-2"
+            title="手动刷新素材库（文件监控已自动启用）"
+          >
+            <RefreshCw className={`w-5 h-5 text-gray-700 dark:text-gray-300 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+          
+          <button
+            onClick={handleThemeToggle}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title={theme === 'light' ? '切换到暗色模式' : '切换到亮色模式'}
+          >
+            {theme === 'light' ? (
+              <Moon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            ) : (
+              <Sun className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            )}
+          </button>
+        </div>
+      </div>
+      
+      {/* 筛选面板 */}
+      {showFilters && (
+        <div className="px-6 pb-3">
+          <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300">筛选条件（实时生效）</div>
+              <button
+                onClick={clearFilters}
+                className="text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-400"
+              >
+                清除全部
+              </button>
+            </div>
+
+            {/* 三列布局 */}
+            <div className="grid grid-cols-3 gap-4">
+              {/* 格式筛选 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">格式</label>
+                <div className="flex flex-col gap-1.5">
+                  {filterOptions.formats.length > 0 ? (
+                    filterOptions.formats.map(format => (
+                      <button
+                        key={format}
+                        onClick={() => toggleFormat(format)}
+                        className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
+                          selectedFormats.includes(format)
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                        }`}
+                      >
+                        {format.toUpperCase()}
+                      </button>
+                    ))
+                  ) : (
+                    <span className="text-xs text-gray-400 py-2">暂无格式数据</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 文件大小筛选 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">文件大小</label>
+                <div className="flex flex-col gap-1.5">
+                  {filterOptions.sizes.length > 0 ? (
+                    filterOptions.sizes.map(size => (
+                      <button
+                        key={size}
+                        onClick={() => toggleSize(size)}
+                        className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
+                          selectedSizes.includes(size)
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    ))
+                  ) : (
+                    <span className="text-xs text-gray-400 py-2">暂无大小数据</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 横竖图筛选 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">图片方向</label>
+                <div className="flex flex-col gap-1.5">
+                  {filterOptions.hasHorizontal && (
+                    <button
+                      onClick={() => toggleOrientation('horizontal')}
+                      className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
+                        selectedOrientation === 'horizontal'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                      }`}
+                    >
+                      横图
+                    </button>
+                  )}
+                  {filterOptions.hasVertical && (
+                    <button
+                      onClick={() => toggleOrientation('vertical')}
+                      className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
+                        selectedOrientation === 'vertical'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                      }`}
+                    >
+                      竖图
+                    </button>
+                  )}
+                  {!filterOptions.hasHorizontal && !filterOptions.hasVertical && (
+                    <span className="text-xs text-gray-400 py-2">暂无方向数据</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+}
+
+export default Header;

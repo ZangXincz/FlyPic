@@ -1,0 +1,23 @@
+{
+  "name": "flypic-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FlyPic - A lightweight and fast image library manager for fnOS",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:backend": "npm --workspace backend run dev",
+    "dev": "npm run dev:backend",
+    "build:fpk": "node scripts/build-fpk.js",
+    "build:fpk:docker": "node scripts/build-fpk-docker.js",
+    "test:docker": "node scripts/test-in-docker.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}
+

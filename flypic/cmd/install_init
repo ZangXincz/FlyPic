@@ -1,0 +1,18 @@
+#!/bin/bash
+LOG="${TRIM_TEMP_LOGFILE:-/tmp/flypic_install.log}"
+exec >> "$LOG" 2>&1
+set -x
+
+echo "=== FlyPic 安装初始化开始 ==="
+echo "时间: $(date)"
+echo "应用名称: ${TRIM_APPNAME}"
+echo "应用版本: ${TRIM_APPVER}"
+echo "用户名: ${TRIM_USERNAME}"
+echo "用户组: ${TRIM_GROUPNAME}"
+echo "数据共享路径: ${TRIM_DATA_SHARE_PATHS}"
+echo "应用目录: ${TRIM_APPDEST}"
+echo "数据目录: ${TRIM_PKGVAR}"
+echo "临时目录: ${TRIM_PKGTMP}"
+echo "=== 安装初始化完成 ==="
+
+exit 0
