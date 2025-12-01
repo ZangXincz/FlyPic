@@ -218,7 +218,7 @@ function MainContent() {
         }`}>
           <div className="flex items-center justify-between mb-2">
             <div className={`text-sm font-medium ${scanPaused ? 'text-yellow-700 dark:text-yellow-300' : 'text-blue-700 dark:text-blue-300'}`}>
-              {scanPaused ? '扫描已暂停' : scanProgress?.status === 'preparing' ? '正在准备扫描...' : '正在扫描素材库'}
+              {scanPaused ? '扫描已暂停' : scanProgress?.status === 'preparing' ? '正在准备扫描...' : '正在扫描素材库，期间建议勿操作，否则会影响扫描速度'}
             </div>
             <div className="flex items-center gap-2">
               <span className={`text-sm ${scanPaused ? 'text-yellow-600' : 'text-blue-600'}`}>

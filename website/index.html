@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlyPic - 飞牛NAS图片检索浏览应用</title>
+    <meta name="description" content="FlyPic 是一款专为飞牛 fnOS 设计的轻量、快速、稳定的图片检索浏览应用，支持10万+级别图片浏览，完全由 AI 开发。">
+    <link rel="icon" type="image/png" href="https://eo.shikejk.com/flypic/icon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="container nav-container">
+            <a href="#" class="logo">
+                <img src="https://eo.shikejk.com/flypic/logo.png" alt="FlyPic" class="logo-img">
+                <span>FlyPic</span>
+            </a>
+            <div class="nav-links">
+                <a href="#features">功能特性</a>
+                <a href="#screenshots">界面预览</a>
+                <a href="#roadmap">开发计划</a>
+                <a href="#install">安装使用</a>
+                <a href="https://github.com/ZangXincz/FlyPic" target="_blank" class="btn btn-outline btn-sm">
+                    <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    GitHub
+                </a>
+            </div>
+            <button class="mobile-menu-btn" id="mobileMenuBtn">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- 移动端菜单 -->
+    <div class="mobile-menu" id="mobileMenu">
+        <a href="#features">功能特性</a>
+        <a href="#screenshots">界面预览</a>
+        <a href="#roadmap">开发计划</a>
+        <a href="#install">安装使用</a>
+        <a href="https://github.com/ZangXincz/FlyPic" target="_blank">GitHub</a>
+    </div>
+
+    <!-- Hero 区域 -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <div class="hero-badge">🤖 完全由 AI 开发 · 专为飞牛 fnOS 设计</div>
+                <h1>轻量、快速、稳定的<br><span class="gradient-text">图像素材检索浏览应用</span></h1>
+                <p class="hero-desc">
+                    支持 <strong>10万+</strong> 级别图片流畅浏览，轻量快速。<strong>非侵入式设计</strong>，
+                    不修改原文件结构。AI开发 <strong>100% 开源免费</strong>。
+                </p>
+                <div class="hero-actions">
+                    <a href="#install" class="btn btn-primary btn-lg">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        立即安装
+                    </a>
+                    <a href="#features" class="btn btn-ghost btn-lg">了解更多</a>
+                </div>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <span class="stat-value">10万+</span>
+                        <span class="stat-label">图片支持</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value">60+</span>
+                        <span class="stat-label">文件格式</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value">实时</span>
+                        <span class="stat-label">文件监控</span>
+                    </div>
+                </div>
+            </div>
+            <div class="hero-image">
+                <div class="hero-image-wrapper">
+                    <img src="https://eo.shikejk.com/flypic/screenshot-main.png" alt="FlyPic 主界面" class="screenshot-main">
+                    <div class="hero-image-glow"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 核心优势 -->
+    <section class="advantages" id="advantages">
+        <div class="container">
+            <div class="advantages-grid">
+                <div class="advantage-card">
+                    <div class="advantage-icon icon-blue">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    </div>
+                    <h3>轻量快速</h3>
+                    <p>基于 SQLite 本地数据库，毫秒级响应。虚拟滚动 + Web Worker 布局计算，流畅浏览海量图片。</p>
+                </div>
+                <div class="advantage-card">
+                    <div class="advantage-icon icon-green">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </div>
+                    <h3>非侵入式</h3>
+                    <p>只在素材库目录创建 .flypic 文件夹存储索引和缩略图，不修改任何原始文件，删除应用后数据完全可控。</p>
+                </div>
+                <div class="advantage-card">
+                    <div class="advantage-icon icon-purple">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    </div>
+                    <h3>稳定可靠</h3>
+                    <p>优雅的资源管理，数据库连接池自动释放，WAL 模式确保数据安全，不影响正常文件操作。</p>
+                </div>
+                <div class="advantage-card">
+                    <div class="advantage-icon icon-orange">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    </div>
+                    <h3>实时同步</h3>
+                    <p>基于 Worker Thread 的文件监控，自动检测新增、删除、修改，实时更新索引，无需手动刷新。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 功能特性 -->
+    <section class="features" id="features">
+        <div class="container">
+            <div class="section-header">
+                <h2>功能特性</h2>
+                <p>专注于图片浏览检索，提供流畅高效的使用体验</p>
+            </div>
+            
+            <div class="features-grid">
+                <!-- 浏览检索 -->
+                <div class="feature-card feature-large">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                    </div>
+                    <h3>固定行高瀑布流</h3>
+                    <p>固定高度、宽度自适应的瀑布流布局，视觉整齐美观。支持缩略图大小调节（150-300px），适应不同浏览需求。</p>
+                    <ul class="feature-list">
+                        <li>虚拟滚动技术，轻松浏览 10万+ 图片</li>
+                        <li>Web Worker 异步计算布局，不阻塞主线程</li>
+                        <li>智能分批加载，按需请求数据</li>
+                    </ul>
+                </div>
+
+                <!-- 智能搜索 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                    </div>
+                    <h3>智能搜索</h3>
+                    <p>多关键词组合搜索，空格分隔即可实现 AND 逻辑。实时搜索 + 防抖优化，输入即搜，快速定位。</p>
+                </div>
+
+                <!-- 高级筛选 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    </div>
+                    <h3>高级筛选</h3>
+                    <p>按格式（JPG/PNG/WebP...）、文件大小、横竖图方向筛选。智能分析当前文件夹内容，动态生成筛选选项。</p>
+                </div>
+
+                <!-- 文件夹树 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    </div>
+                    <h3>文件夹树浏览</h3>
+                    <p>层级文件夹结构展示，支持文件夹搜索（多关键词）、全部展开/折叠。显示每个文件夹的图片数量。</p>
+                </div>
+
+                <!-- 多选操作 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    </div>
+                    <h3>多选批量操作</h3>
+                    <p>Ctrl 点击切换选中，Shift 点击范围选择。支持批量复制到剪贴板、批量导出为 ZIP 压缩包。</p>
+                </div>
+
+                <!-- 图片详情 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </div>
+                    <h3>图片详情面板</h3>
+                    <p>右侧面板显示选中图片的详细信息：尺寸、大小、格式、创建/修改时间、完整路径。渐进式加载，先显示缩略图再加载原图。</p>
+                </div>
+
+                <!-- 实时监控 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </div>
+                    <h3>实时文件监控</h3>
+                    <p>基于 chokidar + Worker Thread 的文件监控，自动检测文件变化。智能防抖合并事件，高效更新索引。</p>
+                </div>
+
+                <!-- 扫描控制 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                    </div>
+                    <h3>扫描控制</h3>
+                    <p>首次添加素材库自动全量扫描，支持暂停/继续。显示扫描进度和预估剩余时间，大量图片也能从容处理。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 支持格式 -->
+    <section class="formats">
+        <div class="container">
+            <div class="section-header">
+                <h2>支持的文件格式</h2>
+                <p>完整支持主流图片格式，其他媒体文件可识别并通过默认应用打开</p>
+            </div>
+            
+            <!-- 主要支持：图片格式 -->
+            <div class="formats-main">
+                <div class="formats-main-header">
+                    <div class="main-icon icon-blue">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                    </div>
+                    <div>
+                        <h3>完整支持的图片格式</h3>
+                        <p>支持预览、缩略图生成、搜索筛选等全部功能</p>
+                    </div>
+                </div>
+                <div class="formats-grid-main">
+                    <div class="format-item"><span class="format-ext">JPG</span><span class="format-name">JPEG</span></div>
+                    <div class="format-item"><span class="format-ext">PNG</span><span class="format-name">PNG</span></div>
+                    <div class="format-item"><span class="format-ext">WebP</span><span class="format-name">WebP</span></div>
+                    <div class="format-item"><span class="format-ext">GIF</span><span class="format-name">动图</span></div>
+                    <div class="format-item"><span class="format-ext">BMP</span><span class="format-name">位图</span></div>
+                    <div class="format-item"><span class="format-ext">TIFF</span><span class="format-name">TIFF</span></div>
+                    <div class="format-item"><span class="format-ext">SVG</span><span class="format-name">矢量图</span></div>
+                </div>
+            </div>
+            
+            <!-- 其他格式：可识别 -->
+            <div class="formats-other">
+                <div class="formats-other-header">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <span>其他可识别格式</span>
+                    <span class="formats-other-note">可在列表中显示，双击通过系统默认应用打开</span>
+                </div>
+                <div class="formats-other-list">
+                    <div class="other-category">
+                        <span class="category-label">视频</span>
+                        <span class="category-formats">MP4 / WebM / MOV / AVI / MKV / FLV / WMV</span>
+                    </div>
+                    <div class="other-category">
+                        <span class="category-label">音频</span>
+                        <span class="category-formats">MP3 / WAV / FLAC / AAC / M4A / OGG / WMA</span>
+                    </div>
+                    <div class="other-category">
+                        <span class="category-label">文档</span>
+                        <span class="category-formats">PDF / TXT / MD / DOC / DOCX / XLS / XLSX / PPT</span>
+                    </div>
+                    <div class="other-category">
+                        <span class="category-label">设计</span>
+                        <span class="category-formats">PSD / AI / Sketch / XD / Figma / EPS</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 界面预览 -->
+    <section class="screenshots-section" id="screenshots">
+        <div class="container">
+            <div class="section-header">
+                <h2>界面预览</h2>
+                <p>现代化设计，支持亮色/暗色主题切换</p>
+            </div>
+            
+            <!-- 桌面端选项卡 -->
+            <div class="desktop-preview">
+                <div class="preview-tabs">
+                    <button class="preview-tab active" data-tab="light">
+                        <span class="tab-icon">☀️</span>
+                        <span>亮色主题</span>
+                    </button>
+                    <button class="preview-tab" data-tab="dark">
+                        <span class="tab-icon">🌙</span>
+                        <span>暗色主题</span>
+                    </button>
+                    <div class="tab-indicator"></div>
+                    <div class="auto-play-hint">
+                        <span class="dot"></span>
+                        自动切换中
+                    </div>
+                </div>
+                <div class="preview-content">
+                    <div class="preview-panel active" data-panel="light">
+                        <img src="https://eo.shikejk.com/flypic/screenshot-light.png" alt="亮色主题界面">
+                    </div>
+                    <div class="preview-panel" data-panel="dark">
+                        <img src="https://eo.shikejk.com/flypic/screenshot-dark.png" alt="暗色主题界面">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 移动端展示 -->
+            <div class="mobile-preview">
+                <h3 class="mobile-preview-title">
+                    <span class="title-icon">📱</span>
+                    移动端适配
+                </h3>
+                <p class="mobile-preview-desc">响应式设计，手机上也能流畅使用</p>
+                <div class="mobile-screens">
+                    <div class="mobile-screen">
+                        <div class="phone-frame">
+                            <img src="https://eo.shikejk.com/flypic/mobile-folder.png" alt="文件夹目录">
+                        </div>
+                        <span class="screen-label">文件夹目录</span>
+                    </div>
+                    <div class="mobile-screen">
+                        <div class="phone-frame">
+                            <img src="https://eo.shikejk.com/flypic/mobile-gallery.png" alt="图片浏览">
+                        </div>
+                        <span class="screen-label">图片浏览</span>
+                    </div>
+                    <div class="mobile-screen">
+                        <div class="phone-frame">
+                            <img src="https://eo.shikejk.com/flypic/mobile-detail.png" alt="图片详情">
+                        </div>
+                        <span class="screen-label">图片详情</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 开发计划 -->
+    <section class="roadmap" id="roadmap">
+        <div class="container">
+            <div class="section-header">
+                <h2>开发计划</h2>
+                <p>持续优化，专注核心体验</p>
+            </div>
+            
+            <div class="roadmap-timeline">
+                <div class="roadmap-item done">
+                    <div class="roadmap-marker"></div>
+                    <div class="roadmap-content">
+                        <span class="roadmap-status">已完成</span>
+                        <h3>核心功能</h3>
+                        <ul>
+                            <li>素材库管理（添加/删除/切换）</li>
+                            <li>固定行高瀑布流浏览</li>
+                            <li>多关键词智能搜索</li>
+                            <li>高级筛选（格式/大小/方向）</li>
+                            <li>文件夹树浏览</li>
+                            <li>实时文件监控</li>
+                            <li>多选批量操作</li>
+                            <li>亮色/暗色主题</li>
+                            <li>移动端适配</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="roadmap-item current">
+                    <div class="roadmap-marker"></div>
+                    <div class="roadmap-content">
+                        <span class="roadmap-status">当前阶段</span>
+                        <h3>优化与维护</h3>
+                        <ul>
+                            <li>性能优化，提升大量图片浏览体验</li>
+                            <li>Bug 修复与稳定性提升</li>
+                            <li>用户反馈响应</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="roadmap-item future">
+                    <div class="roadmap-marker"></div>
+                    <div class="roadmap-content">
+                        <span class="roadmap-status">考虑中</span>
+                        <h3>可能的功能</h3>
+                        <ul>
+                            <li>基础文件操作（删除、重命名、移动）</li>
+                            <li>NAS 登录与远程访问</li>
+                            <li>多用户共享</li>
+                        </ul>
+                        <p class="roadmap-note">* 以上功能不一定会实现，取决于实际需求和开发资源</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 技术栈 -->
+    <section class="tech-stack">
+        <div class="container">
+            <div class="section-header">
+                <h2>技术栈</h2>
+                <p>现代化技术选型，确保性能与稳定性</p>
+            </div>
+            <div class="tech-grid">
+                <div class="tech-group">
+                    <h3>前端</h3>
+                    <div class="tech-items">
+                        <span class="tech-item">React 18</span>
+                        <span class="tech-item">Vite 5</span>
+                        <span class="tech-item">TailwindCSS</span>
+                        <span class="tech-item">Zustand</span>
+                        <span class="tech-item">react-window</span>
+                        <span class="tech-item">react-photo-view</span>
+                        <span class="tech-item">Socket.IO Client</span>
+                        <span class="tech-item">Axios</span>
+                        <span class="tech-item">JSZip</span>
+                        <span class="tech-item">Lucide Icons</span>
+                    </div>
+                </div>
+                <div class="tech-group">
+                    <h3>后端</h3>
+                    <div class="tech-items">
+                        <span class="tech-item">Node.js</span>
+                        <span class="tech-item">Express</span>
+                        <span class="tech-item">better-sqlite3</span>
+                        <span class="tech-item">Sharp</span>
+                        <span class="tech-item">Socket.IO</span>
+                        <span class="tech-item">chokidar</span>
+                        <span class="tech-item">glob</span>
+                        <span class="tech-item">p-limit</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 安装使用 -->
+    <section class="install" id="install">
+        <div class="container">
+            <div class="section-header">
+                <h2>安装使用</h2>
+                <p>通过飞牛应用中心一键安装</p>
+            </div>
+            
+            <div class="install-steps">
+                <div class="install-step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>打开飞牛应用中心</h3>
+                        <p>在飞牛 fnOS 系统中打开应用中心</p>
+                    </div>
+                </div>
+                <div class="install-step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>搜索 FlyPic</h3>
+                        <p>在应用中心搜索 "FlyPic" 或 "图片浏览"</p>
+                    </div>
+                </div>
+                <div class="install-step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>点击安装</h3>
+                        <p>点击安装按钮，等待安装完成</p>
+                    </div>
+                </div>
+                <div class="install-step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>添加素材库</h3>
+                        <p>打开应用，添加您的图片文件夹作为素材库</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 使用说明卡片 -->
+            <div class="usage-guide">
+                <div class="section-header" style="margin-bottom: 40px;">
+                    <h2>使用说明</h2>
+                    <p>简单几步，轻松管理您的素材库</p>
+                </div>
+                <div class="usage-grid">
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                        </div>
+                        <h4>添加素材库</h4>
+                        <p>点击左侧素材库下拉框，选择"添加新素材库"，输入名称和路径</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                        </div>
+                        <h4>浏览图片</h4>
+                        <p>点击左侧文件夹树选择文件夹，或点击"全部图片"查看所有图片</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                        </div>
+                        <h4>搜索图片</h4>
+                        <p>在顶部搜索框输入关键词，多个关键词用空格分隔实现 AND 搜索</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                        </div>
+                        <h4>筛选图片</h4>
+                        <p>点击搜索框旁的筛选按钮，按格式、大小、方向筛选</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        </div>
+                        <h4>多选操作</h4>
+                        <p>Ctrl+点击 切换选中，Shift+点击 范围选择，支持批量导出</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        </div>
+                        <h4>导出图片</h4>
+                        <p>选中图片后，在右侧面板点击"复制"或"导出"为 ZIP</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        </div>
+                        <h4>调整缩略图</h4>
+                        <p>拖动顶部滑块调整缩略图大小（150-300px）</p>
+                    </div>
+                    <div class="usage-card">
+                        <div class="usage-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                        </div>
+                        <h4>切换主题</h4>
+                        <p>点击右上角太阳/月亮图标切换亮色/暗色主题</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 数据存储说明 -->
+    <section class="data-storage">
+        <div class="container">
+            <div class="section-header">
+                <h2>数据存储结构</h2>
+                <p>非侵入式设计，数据完全可控</p>
+            </div>
+            <div class="storage-visual">
+                <div class="storage-diagram">
+                    <div class="folder-tree">
+                        <div class="tree-item root">
+                            <span class="folder-icon">📁</span>
+                            <span class="folder-name">素材库目录</span>
+                        </div>
+                        <div class="tree-item">
+                            <span class="folder-icon">🖼️</span>
+                            <span class="folder-name">您的图片文件...</span>
+                        </div>
+                        <div class="tree-item">
+                            <span class="folder-icon">📁</span>
+                            <span class="folder-name highlight">.flypic/</span>
+                            <span class="folder-desc">← FlyPic 数据目录</span>
+                        </div>
+                        <div class="tree-item sub">
+                            <span class="folder-icon">📁</span>
+                            <span class="folder-name">thumbnails/</span>
+                            <span class="folder-desc">WebP 缩略图</span>
+                        </div>
+                        <div class="tree-item sub">
+                            <span class="folder-icon">🗄️</span>
+                            <span class="folder-name">metadata.db</span>
+                            <span class="folder-desc">SQLite 数据库</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="storage-info">
+                    <div class="info-card">
+                        <div class="info-icon icon-green">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        </div>
+                        <div class="info-content">
+                            <h4>安全无侵入</h4>
+                            <p>只在素材库目录创建 .flypic 隐藏文件夹，不修改任何原始文件</p>
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-icon icon-blue">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </div>
+                        <div class="info-content">
+                            <h4>一键清除</h4>
+                            <p>删除 .flypic 文件夹即可完全清除索引数据，不留任何痕迹</p>
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-icon icon-purple">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                        </div>
+                        <div class="info-content">
+                            <h4>高效存储</h4>
+                            <p>WebP 格式缩略图 + SQLite 数据库，占用空间小，查询速度快</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <img src="https://eo.shikejk.com/flypic/logo.png" alt="FlyPic" class="footer-logo">
+                    <span>FlyPic</span>
+                </div>
+                <div class="footer-links">
+                    <a href="https://github.com/ZangXincz/FlyPic" target="_blank">GitHub</a>
+                    <a href="https://github.com/ZangXincz/FlyPic/issues" target="_blank">问题反馈</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>MIT License | 专为飞牛 fnOS 设计</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 回到顶部按钮 -->
+    <button class="back-to-top" id="backToTop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+    </button>
+
+    <script>
+        // 移动端菜单
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const mobileMenu = document.getElementById('mobileMenu');
+        
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenuBtn.classList.toggle('active');
+            mobileMenu.classList.toggle('active');
+        });
+
+        // 点击菜单项关闭菜单
+        mobileMenu.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', () => {
+                mobileMenuBtn.classList.remove('active');
+                mobileMenu.classList.remove('active');
+            });
+        });
+
+        // 滚动时导航栏效果 & 回到顶部按钮
+        const backToTop = document.getElementById('backToTop');
+        window.addEventListener('scroll', () => {
+            const navbar = document.querySelector('.navbar');
+            if (window.scrollY > 50) {
+                navbar.classList.add('scrolled');
+            } else {
+                navbar.classList.remove('scrolled');
+            }
+            
+            // 回到顶部按钮显示/隐藏
+            if (window.scrollY > 500) {
+                backToTop.classList.add('visible');
+            } else {
+                backToTop.classList.remove('visible');
+            }
+        });
+
+        // 回到顶部
+        backToTop.addEventListener('click', () => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        // 平滑滚动
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        });
+
+        // 界面预览选项卡自动切换
+        const previewTabs = document.querySelectorAll('.preview-tab');
+        const previewPanels = document.querySelectorAll('.preview-panel');
+        let currentTab = 0;
+        let autoPlayInterval;
+        
+        function switchTab(index) {
+            previewTabs.forEach(tab => tab.classList.remove('active'));
+            previewPanels.forEach(panel => panel.classList.remove('active'));
+            
+            previewTabs[index].classList.add('active');
+            previewPanels[index].classList.add('active');
+            currentTab = index;
+        }
+        
+        // 点击切换
+        previewTabs.forEach((tab, index) => {
+            tab.addEventListener('click', () => {
+                switchTab(index);
+                // 点击后重置自动播放
+                clearInterval(autoPlayInterval);
+                startAutoPlay();
+            });
+        });
+        
+        // 自动切换（每5秒）
+        function startAutoPlay() {
+            autoPlayInterval = setInterval(() => {
+                currentTab = (currentTab + 1) % previewTabs.length;
+                switchTab(currentTab);
+            }, 5000);
+        }
+        
+        startAutoPlay();
+
+        // 滚动动画 - Intersection Observer
+        const observerOptions = {
+            root: null,
+            rootMargin: '0px',
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                }
+            });
+        }, observerOptions);
+
+        // 为需要动画的元素添加观察
+        document.querySelectorAll('.advantage-card, .feature-card, .format-item, .screenshot-item, .roadmap-item, .install-step, .tech-group').forEach((el, index) => {
+            el.classList.add('fade-in');
+            el.style.transitionDelay = `${(index % 4) * 0.1}s`;
+            observer.observe(el);
+        });
+
+        // Section headers 动画
+        document.querySelectorAll('.section-header').forEach(el => {
+            el.classList.add('fade-in');
+            observer.observe(el);
+        });
+    </script>
+</body>
+</html>
