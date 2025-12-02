@@ -6,6 +6,7 @@ const { exec } = require('child_process');
 const dbPool = require('../database/dbPool');
 const { generateThumbnail } = require('../utils/thumbnail');
 const { getLibrary } = require('../utils/config');
+const { mapImageForFrontend, mapFolderForFrontend } = require('../utils/fieldMapper');
 
 // 限制并发缩略图请求数量（防止内存爆炸）
 let activeThumbnailRequests = 0;
@@ -51,14 +52,14 @@ router.get('/', (req, res) => {
       // 如果使用分页，返回分页格式；否则保持向后兼容
       if (pagination) {
         res.json({
-          images: result.images,
+          images: result.images.map(mapImageForFrontend),
           total: result.total,
           offset: result.offset,
           limit: result.limit,
           hasMore: result.hasMore
         });
       } else {
-        res.json({ images: result });
+        res.json({ images: result.map(mapImageForFrontend) });
       }
     } finally {
       // 释放连接
@@ -170,7 +171,7 @@ router.get('/folders', (req, res) => {
 
     try {
       const folders = db.getFolderTree();
-      res.json({ folders });
+      res.json({ folders: folders.map(mapFolderForFrontend) });
     } finally {
       dbPool.release(library.path);
     }

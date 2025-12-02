@@ -34,21 +34,9 @@ const useStore = create((set, get) => ({
   filteredImages: [],
   totalImageCount: 0,  // 整个素材库的总图片数
   
-  // 设置图片（只存储必要字段）
+  // 设置图片（后端已统一转换为 camelCase，直接使用）
   setImages: (images) => {
-    // 只保留必要字段，减少内存占用
-    const lightweightImages = images.map(img => ({
-      id: img.id,
-      path: img.path,
-      filename: img.filename,
-      size: img.size,
-      format: img.format,
-      width: img.width,
-      height: img.height,
-      thumbnailPath: img.thumbnail_path || img.thumbnailPath,
-      folder: img.folder
-    }));
-    set({ images: lightweightImages, filteredImages: lightweightImages });
+    set({ images, filteredImages: images });
   },
   
   setFilteredImages: (filteredImages) => set({ filteredImages }),
@@ -75,19 +63,9 @@ const useStore = create((set, get) => ({
   folders: [],
   selectedFolder: null,
   
-  // 设置文件夹（只保留必要字段）
+  // 设置文件夹（后端已统一转换为 camelCase，直接使用）
   setFolders: (folders) => {
-    // 递归转换文件夹，确保所有层级的字段名一致
-    const transformFolder = (folder) => ({
-      path: folder.path,
-      name: folder.name,
-      imageCount: folder.image_count || folder.imageCount,
-      parentPath: folder.parent_path || folder.parentPath,
-      children: (folder.children || []).map(transformFolder)
-    });
-    
-    const lightweightFolders = folders.map(transformFolder);
-    set({ folders: lightweightFolders });
+    set({ folders });
   },
   
   // 切换文件夹时清理缓存

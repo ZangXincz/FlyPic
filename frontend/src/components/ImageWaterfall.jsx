@@ -257,9 +257,9 @@ function ImageWaterfall() {
       width: img.width,
       height: img.height,
       filename: img.filename,
-      thumbnail_path: img.thumbnail_path,
+      thumbnailPath: img.thumbnailPath,
       path: img.path,
-      file_type: img.file_type,
+      fileType: img.fileType,
       format: img.format
     }));
     
@@ -360,8 +360,8 @@ function ImageWaterfall() {
   const rows = useWorker ? workerRows : syncRows;
 
   const getThumbnailUrl = (image) => {
-    // 注意：store中将thumbnail_path转换为thumbnailPath（驼峰命名）
-    const thumbnailPath = image.thumbnailPath || image.thumbnail_path;
+    // 后端已统一转换为 camelCase
+    const thumbnailPath = image.thumbnailPath;
     
     if (!currentLibraryId || !thumbnailPath) {
       return '';
@@ -460,7 +460,7 @@ function ImageWaterfall() {
           }}
           onClick={(e) => handleImageClick(image, e, flatIndex)}
           onDoubleClick={() => {
-            const fileType = image.file_type || 'image';
+            const fileType = image.fileType || 'image';
             if (fileType === 'image') {
               setPhotoIndex(flatIndex);
             } else {
@@ -481,19 +481,19 @@ function ImageWaterfall() {
           />
           
           {/* 文件类型标识 */}
-          {image.file_type && image.file_type !== 'image' && (
+          {image.fileType && image.fileType !== 'image' && (
             <div className={`absolute top-2 right-2 rounded-md px-2 py-1 flex items-center gap-1 shadow-lg ${
-              image.file_type === 'video' ? 'bg-blue-500 bg-opacity-90' :
-              image.file_type === 'audio' ? 'bg-pink-500 bg-opacity-90' :
-              image.file_type === 'document' ? 'bg-green-500 bg-opacity-90' :
-              image.file_type === 'design' ? 'bg-purple-500 bg-opacity-90' :
+              image.fileType === 'video' ? 'bg-blue-500 bg-opacity-90' :
+              image.fileType === 'audio' ? 'bg-pink-500 bg-opacity-90' :
+              image.fileType === 'document' ? 'bg-green-500 bg-opacity-90' :
+              image.fileType === 'design' ? 'bg-purple-500 bg-opacity-90' :
               'bg-gray-500 bg-opacity-90'
             }`}>
-              {image.file_type === 'video' && <Play className="w-4 h-4 text-white fill-white" />}
-              {image.file_type === 'audio' && <Music className="w-4 h-4 text-white" />}
-              {image.file_type === 'document' && <FileText className="w-4 h-4 text-white" />}
-              {image.file_type === 'design' && <Palette className="w-4 h-4 text-white" />}
-              {image.file_type === 'other' && <File className="w-4 h-4 text-white" />}
+              {image.fileType === 'video' && <Play className="w-4 h-4 text-white fill-white" />}
+              {image.fileType === 'audio' && <Music className="w-4 h-4 text-white" />}
+              {image.fileType === 'document' && <FileText className="w-4 h-4 text-white" />}
+              {image.fileType === 'design' && <Palette className="w-4 h-4 text-white" />}
+              {image.fileType === 'other' && <File className="w-4 h-4 text-white" />}
               <span className="text-white text-xs font-semibold uppercase">
                 {image.format || image.filename.split('.').pop()}
               </span>

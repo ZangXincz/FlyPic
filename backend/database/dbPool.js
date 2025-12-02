@@ -74,14 +74,8 @@ class DatabasePool {
         
         // 关闭数据库连接
         if (conn.db && conn.db.db) {
-          // 执行 checkpoint 确保 WAL 写入主数据库
-          try {
-            conn.db.db.pragma('wal_checkpoint(TRUNCATE)');
-          } catch (e) {
-            console.warn(`[DBPool] WAL checkpoint warning:`, e.message);
-          }
-          
-          // 关闭连接
+          // 注意：db.js 使用 DELETE 模式而非 WAL，无需 checkpoint
+          // 直接关闭连接即可
           conn.db.close();
         }
         
@@ -106,15 +100,8 @@ class DatabasePool {
         // 强制设置引用计数为0
         conn.refCount = 0;
         
-        // 执行 WAL checkpoint
-        if (conn.db && conn.db.db) {
-          try {
-            conn.db.db.pragma('wal_checkpoint(TRUNCATE)');
-          } catch (e) {
-            console.warn(`[DBPool] WAL checkpoint warning for ${path}:`, e.message);
-          }
-        }
-        
+        // 注意：db.js 使用 DELETE 模式而非 WAL，无需 checkpoint
+        // 直接关闭连接即可
         conn.db.close();
         console.log(`[DBPool] Closed connection for: ${path}`);
       } catch (error) {
@@ -195,7 +182,6 @@ class DatabasePool {
    */
   clear() {
     // 清理空闲连接
-    const now = Date.now();
     const toClose = [];
     
     for (const [path, conn] of this.connections.entries()) {

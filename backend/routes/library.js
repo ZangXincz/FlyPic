@@ -107,14 +107,14 @@ router.delete('/:id', async (req, res) => {
     }
 
     const dbPool = require('../database/dbPool');
-    const fileWatcher = require('../utils/fileWatcher');
     const scanManager = require('../utils/scanManager');
+    const lightweightWatcher = require('../utils/lightweightWatcher');
 
     // 1. 停止扫描并清理状态
     scanManager.clearState(id);
 
     // 2. 停止文件监控
-    fileWatcher.unwatch(id);
+    lightweightWatcher.unwatch(id);
 
     // 3. 关闭数据库连接
     dbPool.close(library.path);
@@ -142,6 +142,7 @@ router.post('/:id/set-current', async (req, res) => {
     const config = loadConfig();
     const dbPool = require('../database/dbPool');
     const scanManager = require('../utils/scanManager');
+    const { needsMigration, migrateThumbnails } = require('../utils/migrateThumbnails');
 
     // 获取旧的当前素材库
     const oldLibraryId = config.currentLibraryId;
@@ -168,6 +169,17 @@ router.post('/:id/set-current', async (req, res) => {
 
     // 预热新数据库连接（避免第一个查询时才创建连接）
     if (newLibrary) {
+      // 检查是否需要迁移缩略图
+      if (needsMigration(newLibrary.path)) {
+        console.log(`[Library] Migrating thumbnails for: ${newLibrary.name}`);
+        try {
+          await migrateThumbnails(newLibrary.path);
+        } catch (error) {
+          console.error(`[Library] Thumbnail migration failed:`, error);
+          // 不阻塞切换流程，继续执行
+        }
+      }
+
       const db = dbPool.acquire(newLibrary.path);
       // 执行一个简单查询来预热缓存
       try {
@@ -220,9 +232,9 @@ router.post('/:id/release', (req, res) => {
     dbPool.close(library.path);
 
     // 2. 停止文件监控
-    const fileWatcher = req.app.get('fileWatcher');
-    if (fileWatcher && fileWatcher.isWatching(id)) {
-      fileWatcher.unwatch(id);
+    const lightweightWatcher = require('../utils/lightweightWatcher');
+    if (lightweightWatcher.isWatching(id)) {
+      lightweightWatcher.unwatch(id);
     }
 
     res.json({

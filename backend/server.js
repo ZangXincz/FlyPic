@@ -3,7 +3,6 @@ const cors = require('cors');
 const path = require('path');
 const http = require('http');
 const { Server } = require('socket.io');
-const fileWatcher = require('./utils/fileWatcher');
 const MemoryMonitor = require('./utils/memoryMonitor');
 const CleanupManager = require('./utils/cleanupManager');
 
@@ -78,9 +77,6 @@ io.on('connection', (socket) => {
 
 // Make io accessible to routes
 app.set('io', io);
-
-// Make fileWatcher accessible to routes
-app.set('fileWatcher', fileWatcher);
 
 // Initialize memory optimization components
 const memoryConfig = require('./config/memory');

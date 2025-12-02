@@ -645,18 +645,6 @@ async function generatePlaceholderThumbnail(outputPath, type, label) {
   };
 }
 
-/**
- * 获取文件类型对应的图标（Unicode）
- */
-function getIconForType(type) {
-  const icons = {
-    video: '🎬',
-    document: '📄',
-    special: '🎨'
-  };
-  return icons[type] || '📁';
-}
-
 module.exports = {
   isImageFile,
   getFileType,
