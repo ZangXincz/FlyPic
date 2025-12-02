@@ -7,6 +7,10 @@ const dbPool = require('../database/dbPool');
 const { generateThumbnail } = require('../utils/thumbnail');
 const { getLibrary } = require('../utils/config');
 
+// 限制并发缩略图请求数量（防止内存爆炸）
+let activeThumbnailRequests = 0;
+const MAX_CONCURRENT_THUMBNAILS = 10;
+
 // Get images with search and filters (supports pagination)
 router.get('/', (req, res) => {
   try {
@@ -147,6 +151,13 @@ router.get('/folders', (req, res) => {
 
 // Serve thumbnail
 router.get('/thumbnail/:libraryId/:size/:filename', async (req, res) => {
+  // 限制并发请求
+  if (activeThumbnailRequests >= MAX_CONCURRENT_THUMBNAILS) {
+    return res.status(429).json({ error: 'Too many thumbnail requests' });
+  }
+  
+  activeThumbnailRequests++;
+  
   try {
     const { libraryId, size, filename } = req.params;
 
@@ -192,9 +203,18 @@ router.get('/thumbnail/:libraryId/:size/:filename', async (req, res) => {
       'Cache-Control': 'public, max-age=31536000, immutable',
       'Vary': 'Accept-Encoding'
     });
-    res.sendFile(targetPath);
+    
+    // 使用流式传输，避免一次性加载到内存
+    const stream = fs.createReadStream(targetPath);
+    stream.on('error', (err) => {
+      console.error('[Thumbnail] Stream error:', err);
+      res.status(500).end();
+    });
+    stream.pipe(res);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  } finally {
+    activeThumbnailRequests--;
   }
 });
 
@@ -215,7 +235,13 @@ router.get('/original/:libraryId/*', (req, res) => {
       return res.status(404).json({ error: 'Image not found' });
     }
 
-    res.sendFile(fullPath);
+    // 使用流式传输，避免大文件占用内存
+    const stream = fs.createReadStream(fullPath);
+    stream.on('error', (err) => {
+      console.error('[Original] Stream error:', err);
+      res.status(500).end();
+    });
+    stream.pipe(res);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -9,7 +9,7 @@ const { libraryPath, libraryName } = workerData;
 
 console.log(`[Worker] Starting chokidar for: ${libraryName}`);
 
-// 创建监控器
+// 创建监控器（极致内存优化配置）
 const watcher = chokidar.watch(['**/*.*', '**/'], {
   cwd: libraryPath,
   ignored: [
@@ -19,12 +19,18 @@ const watcher = chokidar.watch(['**/*.*', '**/'], {
     '**/.*'
   ],
   persistent: true,
+  // 跳过初始扫描，避免启动时内存激增（Requirements 11.4）
   ignoreInitial: true,
+  // 禁用轮询，使用原生文件系统事件（Requirements 11.2）
   usePolling: false,
-  awaitWriteFinish: {
-    stabilityThreshold: 1000,
-    pollInterval: 200
-  }
+  // 禁用写入完成检测，减少内存开销（Requirements 11.3）
+  awaitWriteFinish: false,
+  // 禁用文件统计缓存，避免缓存大量文件元数据（Requirements 11.1）
+  disableStatCache: true,
+  // 不自动获取文件统计信息
+  alwaysStat: false,
+  // 限制深度
+  depth: 99
 });
 
 // 监听事件并发送到主线程

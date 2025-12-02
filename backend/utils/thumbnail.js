@@ -3,6 +3,18 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// 配置 Sharp 内存限制（防止内存泄漏）
+sharp.cache({
+  memory: 50, // 最大缓存 50MB（默认 50MB）
+  files: 0,   // 禁用文件缓存
+  items: 20   // 最多缓存 20 个操作
+});
+
+// 设置并发限制
+sharp.concurrency(1); // 一次只处理 1 张图片
+
+console.log('[Sharp] Memory-optimized configuration applied: cache=50MB, concurrency=1');
+
 // 支持的文件格式（确定可以生成缩略图的）
 const IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heif', 'heic', 'svg'];
 
@@ -81,10 +93,15 @@ function isImageFile(filename) {
  * Calculate file hash for change detection
  */
 function calculateFileHash(filePath) {
-  const fileBuffer = fs.readFileSync(filePath);
+  let fileBuffer = fs.readFileSync(filePath);
   const hashSum = crypto.createHash('md5');
   hashSum.update(fileBuffer);
-  return hashSum.digest('hex');
+  const hash = hashSum.digest('hex');
+  
+  // 显式释放 Buffer
+  fileBuffer = null;
+  
+  return hash;
 }
 
 /**
@@ -157,7 +174,7 @@ function getThumbnailConfig(originalWidth, originalHeight, targetHeight = 200) {
 async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
   try {
     // 先读取文件到 Buffer，避免 Sharp 锁定文件句柄
-    const inputBuffer = fs.readFileSync(inputPath);
+    let inputBuffer = fs.readFileSync(inputPath);
 
     // Get image metadata from buffer
     const metadata = await sharp(inputBuffer).metadata();
@@ -218,6 +235,14 @@ async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
         alphaQuality: hasAlpha ? 100 : undefined
       })
       .toFile(outputPath);
+
+    // 显式释放 Buffer 内存
+    inputBuffer = null;
+    
+    // 强制 GC（如果可用）
+    if (global.gc && Math.random() < 0.1) { // 10% 概率执行 GC
+      global.gc();
+    }
 
     // 获取文件大小
     const stats = fs.statSync(outputPath);
@@ -345,8 +370,11 @@ async function generateImageThumbnails(imagePath, libraryPath) {
 
   console.log(`✅ Thumbnail generated: ${path.basename(out480)}, ${thumbnailResult.width}x${thumbnailResult.height}, ${(thumbnailResult.size / 1024).toFixed(1)}KB`);
 
+  // 返回相对于 libraryPath 的路径（包含 .flypic 前缀）
+  const thumbnailPath = path.relative(libraryPath, out480).replace(/\\/g, '/');
+
   return {
-    thumbnail_path: path.relative(flypicDir, out480),
+    thumbnail_path: thumbnailPath,
     thumbnail_size: thumbnailResult.size,
     width: thumbnailResult.width,
     height: thumbnailResult.height,

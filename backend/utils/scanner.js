@@ -330,14 +330,11 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     // 动态导入 p-limit
     const pLimit = (await import('p-limit')).default;
 
-    // 根据 CPU 核心数动态调整并发数
-    const os = require('os');
-    const cpuCount = os.cpus().length;
-    // 默认并发数：核心数 - 1，最小 4，最大 16
-    const concurrency = Math.max(4, Math.min(16, cpuCount - 1));
+    // 超激进内存控制：限制并发数为 2（防止 Sharp 内存泄漏）
+    const concurrency = 2; // 固定为 2，避免 Sharp 并发导致内存泄漏
     const limit = pLimit(concurrency);
 
-    console.log(`🚀 Starting scan with concurrency: ${concurrency} (CPU cores: ${cpuCount})`);
+    console.log(`🚀 Starting scan with concurrency: ${concurrency} (memory-optimized)`);
 
     if (resumeFiles && resumeFiles.length > 0) {
       // 继续扫描：使用待处理文件列表
@@ -517,9 +514,12 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
       currentFiles.map(file => path.relative(libraryPath, file).replace(/\\/g, '/'))
     );
 
-    // Get database files (已经是正斜杠格式)
-    const dbImages = db.getAllImages();
-    const dbPaths = new Set(dbImages.map(img => (img.path || '').replace(/\\/g, '/')));
+    // Get database files (只获取路径，不加载完整数据)
+    const dbPaths = new Set();
+    const stmt = db.db.prepare('SELECT path FROM images');
+    for (const row of stmt.iterate()) {
+      dbPaths.add((row.path || '').replace(/\\/g, '/'));
+    }
 
     // Find new, modified, and deleted files
     const toAdd = [...currentPaths].filter(p => !dbPaths.has(p));
@@ -529,10 +529,11 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     console.log(`Sync: ${toAdd.length} new, ${toCheck.length} to check, ${toDelete.length} deleted`);
 
     // 安全检查：如果要删除的文件数量超过数据库中文件的50%，可能是路径匹配问题
-    if (toDelete.length > 0 && dbImages.length > 0) {
-      const deleteRatio = toDelete.length / dbImages.length;
+    const dbImageCount = dbPaths.size;
+    if (toDelete.length > 0 && dbImageCount > 0) {
+      const deleteRatio = toDelete.length / dbImageCount;
       if (deleteRatio > 0.5 && toDelete.length > 10) {
-        console.warn(`⚠️ 安全检查：要删除 ${toDelete.length}/${dbImages.length} (${(deleteRatio * 100).toFixed(1)}%) 的文件，这可能是路径匹配问题，跳过删除操作`);
+        console.warn(`⚠️ 安全检查：要删除 ${toDelete.length}/${dbImageCount} (${(deleteRatio * 100).toFixed(1)}%) 的文件，这可能是路径匹配问题，跳过删除操作`);
         console.log('示例 currentPath:', [...currentPaths].slice(0, 3));
         console.log('示例 dbPath:', [...dbPaths].slice(0, 3));
         // 清空 toDelete，不执行删除
@@ -662,17 +663,21 @@ async function quickSync(libraryPath, db) {
     currentFiles.map(file => path.relative(libraryPath, file).replace(/\\/g, '/'))
   );
 
-  // 获取数据库文件
-  const dbImages = db.getAllImages();
-  const dbPaths = new Set(dbImages.map(img => (img.path || '').replace(/\\/g, '/')));
+  // 获取数据库文件（只获取路径，不加载完整数据）
+  const dbPaths = new Set();
+  const stmt = db.db.prepare('SELECT path FROM images');
+  for (const row of stmt.iterate()) {
+    dbPaths.add((row.path || '').replace(/\\/g, '/'));
+  }
 
   // 只检查新增和删除（不检查修改）
   const toAdd = [...currentPaths].filter(p => !dbPaths.has(p));
   let toDelete = [...dbPaths].filter(p => !currentPaths.has(p));
 
   // 安全检查
-  if (toDelete.length > 0 && dbImages.length > 0) {
-    const deleteRatio = toDelete.length / dbImages.length;
+  const dbImageCount = dbPaths.size;
+  if (toDelete.length > 0 && dbImageCount > 0) {
+    const deleteRatio = toDelete.length / dbImageCount;
     if (deleteRatio > 0.5 && toDelete.length > 10) {
       console.warn(`⚠️ 安全检查：跳过删除 ${toDelete.length} 个文件`);
       toDelete = [];

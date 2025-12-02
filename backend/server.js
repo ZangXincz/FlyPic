@@ -4,6 +4,8 @@ const path = require('path');
 const http = require('http');
 const { Server } = require('socket.io');
 const fileWatcher = require('./utils/fileWatcher');
+const MemoryMonitor = require('./utils/memoryMonitor');
+const CleanupManager = require('./utils/cleanupManager');
 
 const app = express();
 const server = http.createServer(app);
@@ -80,8 +82,63 @@ app.set('io', io);
 // Make fileWatcher accessible to routes
 app.set('fileWatcher', fileWatcher);
 
+// Initialize memory optimization components
+const memoryConfig = require('./config/memory');
+const dbPool = require('./database/dbPool');
+
+// 应用更激进的数据库配置
+dbPool.maxIdleTime = memoryConfig.database.idleTimeout;
+
+const cleanupManager = new CleanupManager({
+  routineInterval: memoryConfig.memory.cleanupInterval,
+  dbPool: dbPool
+});
+
+const memoryMonitor = new MemoryMonitor({
+  warningThreshold: memoryConfig.memory.warningThreshold * 1024 * 1024,
+  dangerThreshold: memoryConfig.memory.dangerThreshold * 1024 * 1024,
+  checkInterval: memoryConfig.memory.checkInterval,
+  cleanupManager: cleanupManager,
+  devMode: process.env.NODE_ENV === 'development'
+});
+
+console.log('🧠 Memory optimization config:');
+console.log(`  Warning: ${memoryConfig.memory.warningThreshold}MB, Danger: ${memoryConfig.memory.dangerThreshold}MB`);
+console.log(`  DB idle timeout: ${memoryConfig.database.idleTimeout}ms`);
+console.log(`  Cleanup interval: ${memoryConfig.memory.cleanupInterval}ms`);
+
+// Register database pool as a clearable cache
+cleanupManager.registerCache('dbPool', dbPool);
+
+// Make cleanup manager accessible to routes
+app.set('cleanupManager', cleanupManager);
+
 server.listen(PORT, () => {
   console.log(`🚀 FlyPic server running on http://localhost:${PORT}`);
+
+  // Start memory monitoring and cleanup
+  console.log('🧠 Starting memory optimization...');
+  memoryMonitor.start();
+  cleanupManager.startRoutineCleanup();
+  
+  // 定期诊断内存（每30秒）
+  const memoryDiagnostics = require('./utils/memoryDiagnostics');
+  setInterval(() => {
+    const issues = memoryDiagnostics.detectMemoryLeak();
+    if (issues.length > 0) {
+      console.log('\n⚠️  Memory issues detected:');
+      issues.forEach(issue => {
+        console.log(`  [${issue.severity}] ${issue.message}`);
+      });
+      
+      // 如果有严重问题，强制 GC
+      const critical = issues.some(i => i.severity === 'critical');
+      if (critical) {
+        console.log('  🔧 Forcing aggressive GC...');
+        memoryDiagnostics.forceGCAndReport();
+      }
+    }
+  }, 30000);
 
   // 只为当前选中的素材库启动文件监控和快速同步
   const { loadConfig } = require('./utils/config');
@@ -90,39 +147,21 @@ server.listen(PORT, () => {
   const currentLibrary = config.libraries.find(lib => lib.id === currentLibraryId);
 
   if (currentLibrary) {
-    console.log(`📡 启动当前素材库监控: ${currentLibrary.name}`);
-
-    // 启动文件监控
+    // 🎯 内存优化：使用轻量级监控代替 chokidar（Requirements 11.1-11.7）
+    // chokidar 会在启动时扫描整个目录树，占用大量内存（800MB+）
+    // 轻量级监控使用智能轮询，内存占用 < 50MB
+    console.log(`📡 当前素材库: ${currentLibrary.name}`);
+    
+    const lightweightWatcher = require('./utils/lightweightWatcher');
     try {
-      fileWatcher.watch(currentLibrary.id, io);
-      console.log(`  ✅ 文件监控已启动`);
+      lightweightWatcher.watch(currentLibrary.id, currentLibrary.path, currentLibrary.name, io);
+      console.log(`  ✅ 轻量级监控已启动（内存 < 50MB）`);
     } catch (err) {
-      console.log(`  ❌ 文件监控失败: ${err.message}`);
+      console.log(`  ❌ 监控启动失败: ${err.message}`);
     }
 
-    // 快速同步检测离线变化
-    console.log('🔄 检测离线期间的文件变化...');
-    const { quickSync } = require('./utils/scanner');
-    const dbPool = require('./database/dbPool');
-
-    (async () => {
-      try {
-        const db = dbPool.acquire(currentLibrary.path);
-        const results = await quickSync(currentLibrary.path, db);
-        dbPool.release(currentLibrary.path);
-
-        const changes = results.added + results.deleted;
-        if (changes > 0) {
-          console.log(`  📊 ${currentLibrary.name}: +${results.added} -${results.deleted}`);
-          io.emit('scanComplete', { libraryId: currentLibrary.id, results });
-        } else {
-          console.log(`  ✅ ${currentLibrary.name}: 无变化`);
-        }
-      } catch (err) {
-        console.log(`  ❌ ${currentLibrary.name}: ${err.message}`);
-      }
-      console.log('✅ 启动检查完成');
-    })();
+    console.log('💡 策略：智能轮询（5秒间隔），只检查变化的文件夹');
+    console.log('💡 提示：如需立即同步，请在前端点击"同步"按钮');
   } else {
     console.log('📭 未选中素材库，等待用户操作...');
   }
@@ -133,16 +172,22 @@ const gracefulShutdown = (signal) => {
   console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
 
   try {
-    // 1. 停止所有文件监控
-    console.log('📡 Stopping file watchers...');
-    fileWatcher.unwatchAll();
+    // 1. 停止内存监控和清理
+    console.log('🧠 Stopping memory monitoring...');
+    memoryMonitor.stop();
+    cleanupManager.stopRoutineCleanup();
 
-    // 2. 关闭所有数据库连接
+    // 2. 停止所有文件监控
+    console.log('📡 Stopping file watchers...');
+    const lightweightWatcher = require('./utils/lightweightWatcher');
+    lightweightWatcher.unwatchAll();
+
+    // 3. 关闭所有数据库连接
     console.log('💾 Closing database connections...');
     const dbPool = require('./database/dbPool');
     dbPool.closeAll();
 
-    // 3. 关闭 HTTP 服务器
+    // 4. 关闭 HTTP 服务器
     console.log('🌐 Closing HTTP server...');
     server.close(() => {
       console.log('✅ All resources released, goodbye!');

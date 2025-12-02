@@ -154,10 +154,11 @@ router.post('/fix-folders', async (req, res) => {
     
     try {
       const path = require('path');
-      const images = db.getAllImages();
       let fixed = 0;
       
-      for (const img of images) {
+      // 使用流式处理，不加载所有数据到内存
+      const stmt = db.db.prepare('SELECT path, folder FROM images');
+      for (const img of stmt.iterate()) {
         const expectedFolderRaw = path.dirname(img.path || '');
         const expectedFolder = expectedFolderRaw === '.' ? '' : expectedFolderRaw.replace(/\\/g, '/');
         const currentFolder = (img.folder || '').replace(/\\/g, '/');

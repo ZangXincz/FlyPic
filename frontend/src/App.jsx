@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import useStore from './store/useStore';
 import { libraryAPI, imageAPI, scanAPI } from './services/api';
+import domCleanup from './utils/domCleanup';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import RightPanel from './components/RightPanel';
@@ -153,6 +154,8 @@ function App() {
 
     return () => {
       socket.disconnect();
+      // 组件卸载时清理所有 DOM 资源
+      domCleanup.cleanup();
     };
   }, []);
 

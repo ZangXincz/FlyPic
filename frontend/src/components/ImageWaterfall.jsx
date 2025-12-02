@@ -360,9 +360,14 @@ function ImageWaterfall() {
   const rows = useWorker ? workerRows : syncRows;
 
   const getThumbnailUrl = (image) => {
-    if (!currentLibraryId || !image.thumbnail_path) return '';
+    // 注意：store中将thumbnail_path转换为thumbnailPath（驼峰命名）
+    const thumbnailPath = image.thumbnailPath || image.thumbnail_path;
+    
+    if (!currentLibraryId || !thumbnailPath) {
+      return '';
+    }
     // 提取文件名（兼容反斜杠）
-    const filename = image.thumbnail_path.replace(/\\/g, '/').split('/').pop();
+    const filename = thumbnailPath.replace(/\\/g, '/').split('/').pop();
     // 统一使用 480 尺寸（与 Billfish 一致）
     return imageAPI.getThumbnailUrl(currentLibraryId, '480', filename);
   };
@@ -464,12 +469,14 @@ function ImageWaterfall() {
           }}
         >
           <img
-            src={getThumbnailUrl(image)}
+            src={getThumbnailUrl(image) || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23f3f4f6" width="200" height="200"/%3E%3Ctext x="50%25" y="45%25" dominant-baseline="middle" text-anchor="middle" fill="%239ca3af" font-family="sans-serif" font-size="14"%3E需要同步%3C/text%3E%3Ctext x="50%25" y="60%25" dominant-baseline="middle" text-anchor="middle" fill="%23d1d5db" font-family="sans-serif" font-size="12"%3E点击同步按钮%3C/text%3E%3C/svg%3E'}
             alt={image.filename}
             className="w-full h-full object-cover"
             loading="lazy"
             onError={(e) => {
-              e.target.style.display = 'none';
+              // 缩略图加载失败时显示占位符
+              e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23fef2f2" width="200" height="200"/%3E%3Ctext x="50%25" y="45%25" dominant-baseline="middle" text-anchor="middle" fill="%23dc2626" font-family="sans-serif" font-size="14"%3E加载失败%3C/text%3E%3Ctext x="50%25" y="60%25" dominant-baseline="middle" text-anchor="middle" fill="%23f87171" font-family="sans-serif" font-size="12"%3E请重新同步%3C/text%3E%3C/svg%3E';
+              e.target.onerror = null; // 防止无限循环
             }}
           />
           

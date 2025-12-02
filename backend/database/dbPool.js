@@ -7,7 +7,8 @@ const LibraryDatabase = require('./db');
 class DatabasePool {
   constructor() {
     this.connections = new Map(); // libraryPath -> { db, lastUsed, refCount }
-    this.maxIdleTime = 60000; // 60秒未使用则关闭
+    this.maxConnections = 1; // 最大连接数：1
+    this.maxIdleTime = 60000; // 60秒未使用则关闭（保持连接复用，减少创建/关闭）
     this.cleanupInterval = null;
     
     // 启动定期清理
@@ -16,17 +17,19 @@ class DatabasePool {
 
   /**
    * 获取数据库连接（复用或创建）
-   * 优化：同时只保持一个活跃连接
+   * 优化：严格限制最大1个活跃连接
    */
   acquire(libraryPath) {
     let conn = this.connections.get(libraryPath);
     
     if (!conn) {
-      // 如果已有其他连接且引用计数为0，先关闭它们
-      for (const [path, existingConn] of this.connections.entries()) {
-        if (existingConn.refCount === 0) {
-          console.log(`[DBPool] Auto-closing idle connection: ${path}`);
-          this.close(path);
+      // 强制执行最大连接数限制：如果已有连接，先关闭所有空闲连接
+      if (this.connections.size >= this.maxConnections) {
+        for (const [path, existingConn] of this.connections.entries()) {
+          if (existingConn.refCount === 0) {
+            console.log(`[DBPool] Max connections reached, closing idle: ${path}`);
+            this.close(path);
+          }
         }
       }
       
@@ -38,7 +41,7 @@ class DatabasePool {
         refCount: 0
       };
       this.connections.set(libraryPath, conn);
-      console.log(`[DBPool] Created new connection for: ${libraryPath}`);
+      console.log(`[DBPool] Created new connection for: ${libraryPath} (total: ${this.connections.size}/${this.maxConnections})`);
     }
     
     // 更新使用时间和引用计数
@@ -96,12 +99,26 @@ class DatabasePool {
    * 关闭所有连接
    */
   closeAll() {
+    console.log(`[DBPool] Closing all connections (${this.connections.size} total)`);
+    
     for (const [path, conn] of this.connections.entries()) {
       try {
+        // 强制设置引用计数为0
+        conn.refCount = 0;
+        
+        // 执行 WAL checkpoint
+        if (conn.db && conn.db.db) {
+          try {
+            conn.db.db.pragma('wal_checkpoint(TRUNCATE)');
+          } catch (e) {
+            console.warn(`[DBPool] WAL checkpoint warning for ${path}:`, e.message);
+          }
+        }
+        
         conn.db.close();
         console.log(`[DBPool] Closed connection for: ${path}`);
       } catch (error) {
-        console.error(`[DBPool] Error closing connection:`, error);
+        console.error(`[DBPool] Error closing connection for ${path}:`, error);
       }
     }
     this.connections.clear();
@@ -113,9 +130,19 @@ class DatabasePool {
   }
 
   /**
+   * 强制关闭所有连接（用于紧急清理）
+   * 与 closeAll() 相同，但提供明确的语义
+   */
+  forceCloseAll() {
+    console.log('[DBPool] Force closing all connections (emergency cleanup)');
+    this.closeAll();
+  }
+
+  /**
    * 启动定期清理空闲连接
    */
   startCleanup() {
+    // 更频繁的检查（每10秒）
     this.cleanupInterval = setInterval(() => {
       const now = Date.now();
       const toClose = [];
@@ -131,8 +158,16 @@ class DatabasePool {
       
       if (toClose.length > 0) {
         console.log(`[DBPool] Cleaned up ${toClose.length} idle connections`);
+        
+        // 关闭连接后立即强制 GC
+        if (global.gc) {
+          for (let i = 0; i < 3; i++) {
+            global.gc();
+          }
+          console.log(`[DBPool] Forced GC after closing connections`);
+        }
       }
-    }, 30000); // 每30秒检查一次
+    }, 10000); // 每10秒检查一次（更频繁）
   }
 
   /**
@@ -147,7 +182,33 @@ class DatabasePool {
         idleTime: Date.now() - conn.lastUsed
       });
     }
-    return status;
+    return {
+      connections: status,
+      totalConnections: this.connections.size,
+      maxConnections: this.maxConnections,
+      maxIdleTime: this.maxIdleTime
+    };
+  }
+
+  /**
+   * 实现 clear() 方法以支持 CleanupManager 注册
+   */
+  clear() {
+    // 清理空闲连接
+    const now = Date.now();
+    const toClose = [];
+    
+    for (const [path, conn] of this.connections.entries()) {
+      if (conn.refCount === 0) {
+        toClose.push(path);
+      }
+    }
+    
+    toClose.forEach(path => this.close(path));
+    
+    if (toClose.length > 0) {
+      console.log(`[DBPool] Cleared ${toClose.length} idle connections`);
+    }
   }
 }
 

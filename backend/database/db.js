@@ -13,20 +13,23 @@ class LibraryDatabase {
       fs.mkdirSync(this.flypicDir, { recursive: true });
     }
     
-    // Create thumbnails directory (480px 与 Billfish 一致)
+    // Create thumbnails directory (使用分片结构: .flypic/thumbnails/ab/hash.webp)
     const thumbDir = path.join(this.flypicDir, 'thumbnails');
-    const thumbDir480 = path.join(thumbDir, '480');
     if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true });
-    if (!fs.existsSync(thumbDir480)) fs.mkdirSync(thumbDir480, { recursive: true });
     
     this.db = new Database(this.dbPath);
     
-    // 优化数据库性能
-    this.db.pragma('journal_mode = WAL'); // 启用 WAL 模式，支持并发读写
+    // 超激进内存优化配置
+    // 使用 DELETE 模式而非 WAL（WAL 可能导致内存泄漏）
+    this.db.pragma('journal_mode = DELETE'); // 使用 DELETE 模式（更低内存）
     this.db.pragma('synchronous = NORMAL'); // 平衡性能和安全性
-    this.db.pragma('cache_size = -64000'); // 64MB 缓存
-    this.db.pragma('temp_store = MEMORY'); // 临时表存储在内存
-    this.db.pragma('mmap_size = 268435456'); // 256MB 内存映射
+    this.db.pragma('cache_size = -4096'); // 4MB 缓存（超激进：从8MB降至4MB）
+    this.db.pragma('temp_store = FILE'); // 临时表存储在磁盘
+    this.db.pragma('mmap_size = 0'); // 禁用内存映射
+    this.db.pragma('page_size = 4096'); // 4KB 页面大小（减少内存占用）
+    
+    console.log('[LibraryDatabase] Ultra-aggressive memory optimization applied:');
+    console.log('  cache_size: 4MB, temp_store: FILE, mmap_size: 0, page_size: 4KB');
     
     this.initTables();
   }
@@ -165,8 +168,11 @@ class LibraryDatabase {
   }
 
   getAllImages() {
-    const stmt = this.db.prepare('SELECT * FROM images ORDER BY created_at DESC');
-    return stmt.all();
+    // ⚠️ 警告：此方法会加载所有图片到内存，仅用于调试！
+    // 生产环境请使用 searchImages() 或流式查询
+    console.warn('[DB] WARNING: getAllImages() loads all data into memory. Use searchImages() instead!');
+    const stmt = this.db.prepare('SELECT * FROM images ORDER BY created_at DESC LIMIT 1000');
+    return stmt.all(); // 限制最多 1000 条
   }
 
   searchImages(keywords, filters = {}, pagination = null) {
@@ -220,8 +226,9 @@ class LibraryDatabase {
     if (pagination && typeof pagination.offset === 'number' && typeof pagination.limit === 'number') {
       const timings = {};
       
-      // 先获取数据（快速）
-      const query = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+      // 只选择必要字段，减少内存占用
+      const essentialFields = 'id, path, filename, size, format, width, height, thumbnail_path, folder';
+      const query = `SELECT ${essentialFields} ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
       const paginatedParams = [...params, pagination.limit, pagination.offset];
       
       let queryStart = Date.now();

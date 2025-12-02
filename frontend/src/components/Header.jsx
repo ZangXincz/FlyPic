@@ -46,7 +46,10 @@ function Header() {
     setSelectedOrientation('');
   }, [selectedFolder]);
 
-  // 文件监控（默认启用，实时检测文件变化）
+  // 🎯 内存优化：禁用前端启动 chokidar 文件监控
+  // 后端已经使用轻量级监控器（智能轮询），不需要前端启动
+  // 如果需要手动启动 chokidar，可以取消注释下面的代码
+  /*
   useEffect(() => {
     if (!currentLibraryId) return;
 
@@ -61,6 +64,7 @@ function Header() {
       watchAPI.stop(currentLibraryId).catch(err => console.error('Stop watch error:', err));
     };
   }, [currentLibraryId]);
+  */
 
   // 防抖搜索（300ms 延迟，减少请求频率）
   const handleSearchChange = (value) => {

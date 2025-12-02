@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import imageCache from '../utils/imageCache';
+import domCleanup from '../utils/domCleanup';
 
 const useStore = create((set, get) => ({
   // Theme
@@ -10,18 +12,45 @@ const useStore = create((set, get) => ({
   libraries: [],
   currentLibraryId: null,
   setLibraries: (libraries) => set({ libraries }),
-  setCurrentLibrary: (id) => set({ currentLibraryId: id }),
+  
+  // 切换素材库时清理缓存
+  setCurrentLibrary: (id) => {
+    const state = get();
+    if (state.currentLibraryId !== id) {
+      console.log('[Store] Switching library, clearing caches...');
+      imageCache.clear();
+      domCleanup.revokeAllBlobUrls();
+    }
+    set({ currentLibraryId: id });
+  },
   addLibrary: (library) => set((state) => ({ libraries: [...state.libraries, library] })),
   removeLibrary: (id) => set((state) => ({
     libraries: state.libraries.filter((lib) => lib.id !== id),
     currentLibraryId: state.currentLibraryId === id ? null : state.currentLibraryId
   })),
 
-  // Images
+  // Images (只存储轻量元数据)
   images: [],
   filteredImages: [],
   totalImageCount: 0,  // 整个素材库的总图片数
-  setImages: (images) => set({ images, filteredImages: images }),
+  
+  // 设置图片（只存储必要字段）
+  setImages: (images) => {
+    // 只保留必要字段，减少内存占用
+    const lightweightImages = images.map(img => ({
+      id: img.id,
+      path: img.path,
+      filename: img.filename,
+      size: img.size,
+      format: img.format,
+      width: img.width,
+      height: img.height,
+      thumbnailPath: img.thumbnail_path || img.thumbnailPath,
+      folder: img.folder
+    }));
+    set({ images: lightweightImages, filteredImages: lightweightImages });
+  },
+  
   setFilteredImages: (filteredImages) => set({ filteredImages }),
   setTotalImageCount: (count) => set({ totalImageCount: count }),
   
@@ -42,11 +71,39 @@ const useStore = create((set, get) => ({
     filteredImages: [...state.filteredImages, ...newImages]
   })),
 
-  // Folders
+  // Folders (只存储路径和图片数量)
   folders: [],
   selectedFolder: null,
-  setFolders: (folders) => set({ folders }),
-  setSelectedFolder: (folder) => set({ selectedFolder: folder }),
+  
+  // 设置文件夹（只保留必要字段）
+  setFolders: (folders) => {
+    const lightweightFolders = folders.map(folder => ({
+      path: folder.path,
+      name: folder.name,
+      imageCount: folder.image_count || folder.imageCount,
+      parentPath: folder.parent_path || folder.parentPath,
+      children: folder.children || []
+    }));
+    set({ folders: lightweightFolders });
+  },
+  
+  // 切换文件夹时清理缓存
+  setSelectedFolder: (folder) => {
+    const state = get();
+    if (state.selectedFolder !== folder) {
+      console.log('[Store] Switching folder, clearing ALL data...');
+      imageCache.clear();
+      domCleanup.revokeAllBlobUrls();
+      // 完全清空图片列表（真正的按需加载）
+      set({ 
+        selectedFolder: folder,
+        images: [],
+        filteredImages: []
+      });
+      return;
+    }
+    set({ selectedFolder: folder });
+  },
 
   // Search and filters
   searchKeywords: '',
@@ -122,6 +179,18 @@ const useStore = create((set, get) => ({
   getCurrentLibrary: () => {
     const state = get();
     return state.libraries.find((lib) => lib.id === state.currentLibraryId);
+  },
+
+  // Image cache statistics
+  getCacheStats: () => {
+    return imageCache.getStats();
+  },
+
+  // Clear all caches (for manual cleanup)
+  clearAllCaches: () => {
+    console.log('[Store] Clearing all caches...');
+    imageCache.clear();
+    domCleanup.cleanup();
   }
 }));
 
