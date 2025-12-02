@@ -116,6 +116,7 @@ class LightweightWatcher {
    */
   async _checkForChanges(libraryId, libraryPath, libraryName, folderTimestamps) {
     const changedFolders = [];
+    const deletedFolders = [];
 
     // 1. 检查现有文件夹的时间戳
     for (const [folder, oldTimestamp] of folderTimestamps.entries()) {
@@ -129,7 +130,8 @@ class LightweightWatcher {
         }
       } catch (error) {
         // 文件夹被删除
-        changedFolders.push(folder);
+        console.log(`[LightweightWatcher] Folder deleted: ${folder}`);
+        deletedFolders.push(folder);
         folderTimestamps.delete(folder);
       }
     }
@@ -138,6 +140,7 @@ class LightweightWatcher {
     const currentFolders = await this._getAllFolders(libraryPath);
     for (const folder of currentFolders) {
       if (!folderTimestamps.has(folder)) {
+        console.log(`[LightweightWatcher] New folder detected: ${folder}`);
         changedFolders.push(folder);
         try {
           const stats = await fs.stat(folder);
@@ -153,22 +156,29 @@ class LightweightWatcher {
       console.log(`[LightweightWatcher] Detected changes in ${changedFolders.length} folders`);
       await this._processChangedFolders(libraryId, libraryPath, libraryName, changedFolders);
     }
+
+    // 4. 处理删除的文件夹
+    if (deletedFolders.length > 0) {
+      console.log(`[LightweightWatcher] Processing ${deletedFolders.length} deleted folders`);
+      await this._processDeletedFolders(libraryId, libraryPath, deletedFolders);
+    }
   }
 
   /**
    * 处理变化的文件夹（只扫描这些文件夹）
    */
   async _processChangedFolders(libraryId, libraryPath, libraryName, changedFolders) {
-    const dbConnection = dbPool.acquire(libraryPath);
-    const db = dbConnection.db; // 获取实际的数据库对象
+    const db = dbPool.acquire(libraryPath); // 这是 LibraryDatabase 实例
 
     try {
       // 获取数据库中这些文件夹的文件列表
       const dbFiles = new Set();
       for (const folder of changedFolders) {
-        const relativePath = path.relative(libraryPath, folder);
-        const stmt = db.prepare('SELECT path FROM images WHERE path LIKE ?');
-        const rows = stmt.all(`${relativePath}%`);
+        const relativePath = path.relative(libraryPath, folder).replace(/\\/g, '/');
+        // 使用正确的 SQL 模式匹配
+        const pattern = relativePath ? `${relativePath}/%` : '%';
+        const stmt = db.db.prepare('SELECT path FROM images WHERE folder = ? OR folder LIKE ?');
+        const rows = stmt.all(relativePath, pattern);
         rows.forEach(row => dbFiles.add(row.path));
       }
 
@@ -198,6 +208,14 @@ class LightweightWatcher {
       if (filesAdded.length > 0 || filesRemoved.length > 0) {
         console.log(`[LightweightWatcher] Changes: +${filesAdded.length} -${filesRemoved.length}`);
         
+        // 打印详细信息用于调试
+        if (filesAdded.length > 0) {
+          console.log(`[LightweightWatcher] Files added:`, filesAdded.slice(0, 5));
+        }
+        if (filesRemoved.length > 0) {
+          console.log(`[LightweightWatcher] Files removed:`, filesRemoved.slice(0, 5));
+        }
+        
         const results = await applyChangesFromEvents(libraryPath, db, {
           filesAdded,
           filesChanged: [],
@@ -221,25 +239,77 @@ class LightweightWatcher {
   }
 
   /**
-   * 扫描单个文件夹的图片文件
+   * 扫描单个文件夹的所有支持的文件
    */
   async _scanFolder(folder, libraryPath, fsFiles) {
     try {
       const entries = await fs.readdir(folder, { withFileTypes: true });
-      const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+      // 支持所有文件类型（与 scanner.js 保持一致）
+      const supportedExtensions = [
+        // 图片
+        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.tiff', '.tif', '.avif', '.heif', '.heic',
+        // 视频
+        '.mp4', '.webm', '.mov', '.avi', '.mkv', '.flv', '.m4v', '.wmv', '.mpg', '.mpeg',
+        // 音频
+        '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg',
+        // 文档
+        '.pdf', '.txt', '.md', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        // 设计
+        '.psd', '.ai', '.sketch', '.xd', '.fig'
+      ];
 
       for (const entry of entries) {
         if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase();
-          if (imageExtensions.includes(ext)) {
+          if (supportedExtensions.includes(ext)) {
             const fullPath = path.join(folder, entry.name);
-            const relativePath = path.relative(libraryPath, fullPath);
+            const relativePath = path.relative(libraryPath, fullPath).replace(/\\/g, '/');
             fsFiles.add(relativePath);
           }
         }
       }
     } catch (error) {
       // 忽略无法访问的文件夹
+      console.warn(`[LightweightWatcher] Cannot access folder: ${folder}`, error.message);
+    }
+  }
+
+  /**
+   * 处理删除的文件夹
+   */
+  async _processDeletedFolders(libraryId, libraryPath, deletedFolders) {
+    const db = dbPool.acquire(libraryPath);
+
+    try {
+      const filesRemoved = [];
+
+      // 获取这些文件夹中的所有文件
+      for (const folder of deletedFolders) {
+        const relativePath = path.relative(libraryPath, folder);
+        const stmt = db.db.prepare('SELECT path FROM images WHERE path LIKE ?');
+        const rows = stmt.all(`${relativePath}%`);
+        rows.forEach(row => filesRemoved.push(row.path));
+      }
+
+      if (filesRemoved.length > 0) {
+        console.log(`[LightweightWatcher] Removing ${filesRemoved.length} files from deleted folders`);
+        
+        const results = await applyChangesFromEvents(libraryPath, db, {
+          filesAdded: [],
+          filesChanged: [],
+          filesRemoved,
+          dirsAdded: [],
+          dirsRemoved: deletedFolders.map(f => path.relative(libraryPath, f))
+        });
+
+        if (this.ioRef) {
+          this.ioRef.emit('scanComplete', { libraryId, results });
+        }
+      }
+    } catch (error) {
+      console.error(`[LightweightWatcher] Error processing deleted folders:`, error);
+    } finally {
+      dbPool.release(libraryPath);
     }
   }
 

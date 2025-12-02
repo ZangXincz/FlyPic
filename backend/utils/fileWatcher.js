@@ -97,22 +97,27 @@ class FileWatcher {
   _handleWorkerMessage(libraryId, library, msg) {
     switch (msg.type) {
       case 'add':
+        console.log(`[FileWatcher] File added: ${msg.path}`);
         this._getBuffer(libraryId).filesAdded.add(msg.path);
         this._debouncedSync(libraryId, library);
         break;
       case 'unlink':
+        console.log(`[FileWatcher] File removed: ${msg.path}`);
         this._getBuffer(libraryId).filesRemoved.add(msg.path);
         this._debouncedSync(libraryId, library);
         break;
       case 'change':
+        console.log(`[FileWatcher] File changed: ${msg.path}`);
         this._getBuffer(libraryId).filesChanged.add(msg.path);
         this._debouncedSync(libraryId, library);
         break;
       case 'addDir':
+        console.log(`[FileWatcher] Directory added: ${msg.path}`);
         this._getBuffer(libraryId).dirsAdded.add(msg.path);
         this._debouncedSync(libraryId, library, true);
         break;
       case 'unlinkDir':
+        console.log(`[FileWatcher] Directory removed: ${msg.path}`);
         this._getBuffer(libraryId).dirsRemoved.add(msg.path);
         this._debouncedSync(libraryId, library, true);
         break;

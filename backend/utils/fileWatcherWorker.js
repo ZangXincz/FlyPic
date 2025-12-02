@@ -10,8 +10,7 @@ const { libraryPath, libraryName } = workerData;
 console.log(`[Worker] Starting chokidar for: ${libraryName}`);
 
 // 创建监控器（极致内存优化配置）
-const watcher = chokidar.watch(['**/*.*', '**/'], {
-  cwd: libraryPath,
+const watcher = chokidar.watch(libraryPath, {
   ignored: [
     '**/node_modules/**',
     '**/.git/**',
@@ -30,7 +29,9 @@ const watcher = chokidar.watch(['**/*.*', '**/'], {
   // 不自动获取文件统计信息
   alwaysStat: false,
   // 限制深度
-  depth: 99
+  depth: 99,
+  // 确保监听删除事件
+  ignorePermissionErrors: true
 });
 
 // 监听事件并发送到主线程

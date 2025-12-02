@@ -35,6 +35,14 @@ function ensureFolderChain(db, folderPath) {
     visited.add(current);
     const parent = path.posix.dirname(current);
     const name = current.split('/').pop();
+    
+    // 安全检查：确保 db 对象有 getFolderByPath 方法
+    if (typeof db.getFolderByPath !== 'function') {
+      console.error('[ensureFolderChain] Error: db.getFolderByPath is not a function');
+      console.error('[ensureFolderChain] db object keys:', Object.keys(db));
+      return;
+    }
+    
     const existing = db.getFolderByPath(current);
     if (!existing) {
       db.insertFolder({
