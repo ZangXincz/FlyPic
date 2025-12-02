@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import useStore from '../store/useStore';
-import { Folder, Image as ImageIcon, Search } from 'lucide-react';
+import { Folder, Image as ImageIcon, HardDrive } from 'lucide-react';
+import { imageAPI } from '../services/api';
 
 function Dashboard() {
     const {
@@ -11,12 +12,35 @@ function Dashboard() {
     } = useStore();
 
     const currentLibrary = getCurrentLibrary();
+    const [librarySize, setLibrarySize] = useState(0);
 
     // Calculate stats
     const folderCount = folders.length;
 
     // Group folders by parent to find top-level folders
-    const topLevelFolders = folders.filter(f => !f.parent_path || f.parent_path === '.' || f.parent_path === '');
+    const topLevelFolders = folders.filter(f => !f.parentPath || f.parentPath === '.' || f.parentPath === '');
+
+    // Fetch library size
+    useEffect(() => {
+        if (currentLibraryId) {
+            imageAPI.getStats(currentLibraryId)
+                .then(res => {
+                    setLibrarySize(res.data.totalSize || 0);
+                })
+                .catch(err => {
+                    console.error('Failed to fetch library stats:', err);
+                });
+        }
+    }, [currentLibraryId, totalImageCount]); // Re-fetch when library or image count changes
+
+    // Format bytes to human readable format
+    const formatBytes = (bytes) => {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    };
 
     return (
         <div className="flex-1 h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-8">
@@ -63,15 +87,13 @@ function Dashboard() {
                     <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-100 dark:border-gray-700">
                         <div className="flex items-center gap-4">
                             <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
-                                <Search className="w-6 h-6" />
+                                <HardDrive className="w-6 h-6" />
                             </div>
                             <div>
-                                <div className="text-sm font-medium text-gray-900 dark:text-white mb-1">
-                                    快速开始
+                                <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                                    {formatBytes(librarySize)}
                                 </div>
-                                <div className="text-xs text-gray-500 dark:text-gray-400">
-                                    使用左侧目录树浏览或顶部搜索栏查找图片
-                                </div>
+                                <div className="text-sm text-gray-500 dark:text-gray-400">素材库大小</div>
                             </div>
                         </div>
                     </div>
@@ -99,7 +121,7 @@ function Dashboard() {
                                         </div>
                                     </div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                                        {folder.image_count || 0} 张图片
+                                        {folder.imageCount || 0} 张图片
                                     </div>
                                 </div>
                             ))}

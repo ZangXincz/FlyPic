@@ -77,13 +77,16 @@ const useStore = create((set, get) => ({
   
   // 设置文件夹（只保留必要字段）
   setFolders: (folders) => {
-    const lightweightFolders = folders.map(folder => ({
+    // 递归转换文件夹，确保所有层级的字段名一致
+    const transformFolder = (folder) => ({
       path: folder.path,
       name: folder.name,
       imageCount: folder.image_count || folder.imageCount,
       parentPath: folder.parent_path || folder.parentPath,
-      children: folder.children || []
-    }));
+      children: (folder.children || []).map(transformFolder)
+    });
+    
+    const lightweightFolders = folders.map(transformFolder);
     set({ folders: lightweightFolders });
   },
   

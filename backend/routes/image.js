@@ -122,6 +122,36 @@ router.get('/count', (req, res) => {
   }
 });
 
+// Get library statistics (count and total size)
+router.get('/stats', (req, res) => {
+  try {
+    const { libraryId } = req.query;
+
+    if (!libraryId) {
+      return res.status(400).json({ error: 'Library ID is required' });
+    }
+
+    const library = getLibrary(libraryId);
+    if (!library) {
+      return res.status(404).json({ error: 'Library not found' });
+    }
+
+    const db = dbPool.acquire(library.path);
+    
+    try {
+      const stats = db.db.prepare('SELECT COUNT(*) as count, SUM(size) as totalSize FROM images').get();
+      res.json({ 
+        count: stats.count || 0,
+        totalSize: stats.totalSize || 0
+      });
+    } finally {
+      dbPool.release(library.path);
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get folders
 router.get('/folders', (req, res) => {
   try {

@@ -23,6 +23,7 @@ export const imageAPI = {
     return axios.get(`${API_BASE}/image?${query}`, options);
   },
   getCount: (libraryId) => axios.get(`${API_BASE}/image/count?libraryId=${libraryId}`),
+  getStats: (libraryId) => axios.get(`${API_BASE}/image/stats?libraryId=${libraryId}`),
   getFolders: (libraryId) => axios.get(`${API_BASE}/image/folders?libraryId=${libraryId}`),
   getCacheMeta: (libraryId) => axios.get(`${API_BASE}/image/cache-meta?libraryId=${libraryId}`),
   getThumbnailUrl: (libraryId, size, filename) => `${API_BASE}/image/thumbnail/${libraryId}/${size}/${filename}`,

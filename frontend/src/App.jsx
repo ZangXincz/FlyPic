@@ -56,7 +56,7 @@ function App() {
   useEffect(() => {
     // Setup Socket.IO - 开发模式连接后端端口，生产模式使用同源
     const socketUrl = import.meta.env.DEV
-      ? 'http://localhost:3000'  // 开发模式：后端端口
+      ? 'http://localhost:15002'  // 开发模式：后端端口
       : window.location.origin;   // 生产模式：同源
 
     console.log('🔌 Connecting to Socket.IO:', socketUrl);

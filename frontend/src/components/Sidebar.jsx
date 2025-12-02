@@ -437,7 +437,7 @@ function Sidebar() {
             </span>
 
             {/* 图片数量 */}
-            <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{folder.image_count}</span>
+            <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{folder.imageCount}</span>
           </div>
           {hasChildren && isExpanded && renderFolderTree(folder.children, level + 1)}
         </div>
