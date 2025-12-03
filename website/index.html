@@ -49,8 +49,8 @@
                 <div class="hero-badge">🤖 完全由 AI 开发 · 专为飞牛 fnOS 设计</div>
                 <h1>FlyPic 飞图<br><span class="gradient-text">轻量、快速、稳定的图像素材检索浏览应用</span></h1>
                 <p class="hero-desc">
-                    支持 <strong>数十万</strong> 级别图片流畅浏览，轻量快速。<strong>非侵入式设计</strong>，
-                    不修改原文件结构。AI开发 <strong>100% 开源免费</strong>。
+                    支持 <strong>数十万</strong> 级别图片流畅浏览。<strong>非侵入式设计</strong>，
+                    不修改原文件结构。<strong>100% 开源免费</strong>。
                 </p>
                 <div class="hero-actions">
                     <a href="#install" class="btn btn-primary btn-lg">
@@ -96,7 +96,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                     </div>
                     <h3>轻量快速</h3>
-                    <p>基于 SQLite 本地数据库，毫秒级响应。虚拟滚动 + Web Worker 布局计算，流畅浏览海量图片。</p>
+                    <p>基于 SQLite 本地数据库，毫秒级响应。react-window 虚拟滚动 + 浏览器原生懒加载，流畅浏览海量图片。</p>
                 </div>
                 <div class="advantage-card">
                     <div class="advantage-icon icon-green">
@@ -137,11 +137,11 @@
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                     </div>
-                    <h3>固定行高瀑布流</h3>
+                    <h3>Google Photos 风格瀑布流</h3>
                     <p>固定高度、宽度自适应的瀑布流布局，视觉整齐美观。支持缩略图大小调节（150-300px），适应不同浏览需求。</p>
                     <ul class="feature-list">
-                        <li>虚拟滚动技术，轻松浏览数十万图片</li>
-                        <li>Web Worker 异步计算布局，不阻塞主线程</li>
+                        <li>react-window 虚拟滚动，轻松浏览数十万图片</li>
+                        <li>浏览器原生 loading="lazy" 懒加载</li>
                         <li>智能分批加载，按需请求数据</li>
                     </ul>
                 </div>
@@ -413,7 +413,6 @@
                         <span class="tech-item">react-window</span>
                         <span class="tech-item">react-photo-view</span>
                         <span class="tech-item">Socket.IO Client</span>
-                        <span class="tech-item">Axios</span>
                         <span class="tech-item">JSZip</span>
                         <span class="tech-item">Lucide Icons</span>
                     </div>
