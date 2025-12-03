@@ -1,7 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
-import useStore from './store/useStore';
-import { libraryAPI, imageAPI, scanAPI } from './services/api';
+import { useUIStore } from './stores/useUIStore';
+import { useLibraryStore } from './stores/useLibraryStore';
+import { useImageStore } from './stores/useImageStore';
+import { useScanStore } from './stores/useScanStore';
+import { libraryAPI, imageAPI, scanAPI } from './api';
 import domCleanup from './utils/domCleanup';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
@@ -9,15 +12,10 @@ import RightPanel from './components/RightPanel';
 import Header from './components/Header';
 
 function App() {
-  const {
-    theme,
-    setLibraries,
-    setCurrentLibrary,
-    setScanProgress,
-    mobileView,
-    setMobileView,
-    selectedImage
-  } = useStore();
+  const { theme, mobileView, setMobileView } = useUIStore();
+  const { setLibraries, setCurrentLibrary } = useLibraryStore();
+  const { selectedImage } = useImageStore();
+  const { setScanProgress } = useScanStore();
   const [leftWidth, setLeftWidth] = useState(256); // 默认 256px (w-64)
   const [rightWidth, setRightWidth] = useState(320); // 默认 320px (w-80)
   const [isDraggingLeft, setIsDraggingLeft] = useState(false);
@@ -81,7 +79,7 @@ function App() {
 
     socket.on('scanProgress', (progress) => {
       // 只显示当前素材库的进度
-      const currentLibId = useStore.getState().currentLibraryId;
+      const currentLibId = useLibraryStore.getState().currentLibraryId;
       if (progress.libraryId === currentLibId) {
         setScanProgress(progress);
       }
@@ -91,40 +89,40 @@ function App() {
       console.log('📊 Scan complete:', { libraryId, results });
 
       // Only reload if this is the current library
-      const currentLibId = useStore.getState().currentLibraryId;
+      const currentLibId = useLibraryStore.getState().currentLibraryId;
       console.log('🔍 Current library:', currentLibId, 'Scan library:', libraryId, 'Match:', libraryId === currentLibId);
 
       if (libraryId === currentLibId) {
         console.log('🔄 Reloading folders and images...');
 
         // 获取当前的筛选条件
-        const state = useStore.getState();
+        const imageState = useImageStore.getState();
         const params = {
-          keywords: state.searchKeywords,
-          ...state.filters
+          keywords: imageState.searchKeywords,
+          ...imageState.filters
         };
 
         // 只有选中了文件夹才添加 folder 参数
-        if (state.selectedFolder) {
-          params.folder = state.selectedFolder;
+        if (imageState.selectedFolder) {
+          params.folder = imageState.selectedFolder;
         }
 
         // 并行加载文件夹和图片
         Promise.all([
           imageAPI.getFolders(libraryId),
           // 如果没有选中文件夹且没有搜索条件，不加载图片（保持在 Dashboard）
-          (state.selectedFolder || state.searchKeywords || state.filters.formats.length > 0)
+          (imageState.selectedFolder || imageState.searchKeywords || imageState.filters.formats.length > 0)
             ? imageAPI.search(libraryId, params)
-            : Promise.resolve({ data: { images: [] } }),
+            : Promise.resolve({ images: [] }),
           // 扫描完成后总是重新获取总数
           imageAPI.getCount(libraryId)
         ]).then(([foldersRes, imagesRes, countRes]) => {
-          useStore.getState().setFolders(foldersRes.data.folders);
-          useStore.getState().setImages(imagesRes.data.images);
+          useImageStore.getState().setFolders(foldersRes.folders);
+          useImageStore.getState().setImages(imagesRes.images);
           // 更新图片总数
-          useStore.getState().setTotalImageCount(countRes.data.count);
+          useImageStore.getState().setTotalImageCount(countRes.count);
 
-          console.log(`✅ Data reloaded, total: ${countRes.data.count}`);
+          console.log(`✅ Data reloaded, total: ${countRes.count}`);
         }).catch(err => {
           console.error('❌ Error reloading data:', err);
         }).finally(() => {
@@ -162,7 +160,7 @@ function App() {
   const loadLibraries = async () => {
     try {
       const response = await libraryAPI.getAll();
-      const { libraries, currentLibraryId: libId, theme: configTheme, preferences } = response.data;
+      const { libraries, currentLibraryId: libId, theme: configTheme, preferences } = response;
 
       // 立即更新基础状态
       setLibraries(libraries);
@@ -170,11 +168,11 @@ function App() {
 
       // 加载主题和偏好设置
       if (configTheme) {
-        useStore.getState().setTheme(configTheme);
+        useUIStore.getState().setTheme(configTheme);
       }
       if (preferences) {
         const { thumbnailHeight, leftPanelWidth, rightPanelWidth } = preferences;
-        if (thumbnailHeight) useStore.getState().setThumbnailHeight(thumbnailHeight);
+        if (thumbnailHeight) useUIStore.getState().setThumbnailHeight(thumbnailHeight);
         if (leftPanelWidth) setLeftWidth(leftPanelWidth);
         if (rightPanelWidth) setRightWidth(rightPanelWidth);
       }
@@ -186,12 +184,12 @@ function App() {
           imageAPI.getFolders(libId)
         ]);
 
-        useStore.getState().setFolders(foldersRes.data.folders);
+        useImageStore.getState().setFolders(foldersRes.folders);
 
         // 获取总数
         try {
           const countRes = await imageAPI.getCount(libId);
-          useStore.getState().setTotalImageCount(countRes.data.count);
+          useImageStore.getState().setTotalImageCount(countRes.count);
         } catch (e) {
           console.error('Failed to get image count:', e);
         }
@@ -200,7 +198,7 @@ function App() {
 
         // 后台检查扫描状态（不阻塞主流程）
         scanAPI.getStatus(libId).then(scanStatus => {
-          const { status, progress, pendingCount } = scanStatus.data;
+          const { status, progress, pendingCount } = scanStatus;
           if (status === 'scanning' || status === 'paused') {
             console.log(`🔄 恢复扫描状态: ${status}, 进度: ${progress?.percent || 0}%`);
             setScanProgress({
@@ -222,13 +220,13 @@ function App() {
       const params = {};
 
       // Get current selected folder
-      const selectedFolder = useStore.getState().selectedFolder;
+      const selectedFolder = useImageStore.getState().selectedFolder;
       if (selectedFolder) {
         params.folder = selectedFolder;
       }
 
       const response = await imageAPI.search(libraryId, params);
-      useStore.getState().setImages(response.data.images);
+      useImageStore.getState().setImages(response.images);
     } catch (error) {
       console.error('Error loading images:', error);
     }
@@ -237,7 +235,7 @@ function App() {
   const loadFolders = async (libraryId) => {
     try {
       const response = await imageAPI.getFolders(libraryId);
-      useStore.getState().setFolders(response.data.folders);
+      useImageStore.getState().setFolders(response.folders);
     } catch (error) {
       console.error('Error loading folders:', error);
     }
@@ -325,8 +323,8 @@ function App() {
       setIsDraggingLeft(false);
       setIsDraggingRight(false);
       // 拖动结束，恢复
-      useStore.getState().setIsResizingPanels(false);
-      useStore.getState().setResizingSide(null);
+      useUIStore.getState().setIsResizingPanels(false);
+      useUIStore.getState().setResizingSide(null);
     };
 
     // 使用 passive: false 确保可以阻止默认行为
@@ -434,8 +432,8 @@ function App() {
           onMouseDown={(e) => {
             e.preventDefault();
             // 标记正在拖动，供其他组件抑制重算
-            useStore.getState().setIsResizingPanels(true);
-            useStore.getState().setResizingSide('left');
+            useUIStore.getState().setIsResizingPanels(true);
+            useUIStore.getState().setResizingSide('left');
             setIsDraggingLeft(true);
           }}
         >
@@ -455,8 +453,8 @@ function App() {
           onMouseDown={(e) => {
             e.preventDefault();
             // 标记正在拖动，供其他组件抑制重算
-            useStore.getState().setIsResizingPanels(true);
-            useStore.getState().setResizingSide('right');
+            useUIStore.getState().setIsResizingPanels(true);
+            useUIStore.getState().setResizingSide('right');
             setIsDraggingRight(true);
           }}
         >

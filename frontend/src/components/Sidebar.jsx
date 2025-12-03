@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Folder, Search, ChevronRight, ChevronDown, X, Trash2, ChevronsRight, ChevronsDown } from 'lucide-react';
-import useStore from '../store/useStore';
-import { libraryAPI, scanAPI, imageAPI } from '../services/api';
+import { useLibraryStore } from '../stores/useLibraryStore';
+import { useImageStore } from '../stores/useImageStore';
+import { useScanStore } from '../stores/useScanStore';
+import { libraryAPI, scanAPI, imageAPI } from '../api';
 import requestManager from '../services/requestManager';
 import { onUserActionStart } from '../services/imageLoadService';
 
@@ -16,17 +18,8 @@ const checkPausedScan = async (libraryId) => {
 };
 
 function Sidebar() {
-  const {
-    libraries,
-    currentLibraryId,
-    folders,
-    selectedFolder,
-    totalImageCount,
-    setCurrentLibrary,
-    setSelectedFolder,
-    addLibrary,
-    removeLibrary
-  } = useStore();
+  const { libraries, currentLibraryId, setCurrentLibrary, addLibrary, removeLibrary } = useLibraryStore();
+  const { folders, selectedFolder, totalImageCount, setSelectedFolder } = useImageStore();
 
   const [showAddLibrary, setShowAddLibrary] = useState(false);
   const [newLibraryName, setNewLibraryName] = useState('');
@@ -77,8 +70,8 @@ function Sidebar() {
       // 1. 添加素材库
       console.log('📝 添加素材库...');
       const response = await libraryAPI.add(newLibraryName.trim(), newLibraryPath.trim());
-      const newLibId = response.data.id;
-      const hasExistingIndex = response.data.hasExistingIndex;
+      const newLibId = response.id;
+      const hasExistingIndex = response.hasExistingIndex;
 
       addLibrary({
         id: newLibId,
@@ -99,13 +92,13 @@ function Sidebar() {
       setSelectedFolder(null);
 
       // 4. 清空当前显示
-      useStore.getState().setImages([]);
-      useStore.getState().setFolders([]);
-      useStore.getState().setSelectedImage(null);
-      useStore.getState().setTotalImageCount(0); // 清空总数
+      useImageStore.getState().setImages([]);
+      useImageStore.getState().setFolders([]);
+      useImageStore.getState().setSelectedImage(null);
+      useImageStore.getState().setTotalImageCount(0); // 清空总数
 
       // 5. 显示初始进度（立即显示，不等待后端）
-      useStore.getState().setScanProgress({
+      useScanStore.getState().setScanProgress({
         libraryId: newLibId,
         current: 0,
         total: 0,
@@ -121,8 +114,8 @@ function Sidebar() {
             imageAPI.getFolders(newLibId),
             imageAPI.getCount(newLibId)
           ]);
-          useStore.getState().setFolders(foldersRes.data.folders);
-          useStore.getState().setTotalImageCount(countRes.data.count);
+          useImageStore.getState().setFolders(foldersRes.folders);
+          useImageStore.getState().setTotalImageCount(countRes.count);
           console.log('✅ 已加载现有数据');
         } catch (err) {
           console.warn('⚠️ 加载现有数据失败:', err);
@@ -145,7 +138,7 @@ function Sidebar() {
     } catch (error) {
       console.error('❌ Error adding library:', error);
       alert('添加素材库失败: ' + error.message);
-      useStore.getState().setScanProgress(null);
+      useScanStore.getState().setScanProgress(null);
       setIsAdding(false);
     }
   };
@@ -160,15 +153,14 @@ function Sidebar() {
       requestManager.cancelAllRequests();
 
       // 2. 清理当前素材库的状态（立即响应）
-      useStore.getState().setScanProgress(null);
-      useStore.getState().setSelectedImage(null);
-      useStore.getState().setImages([]);
-      useStore.getState().setFolders([]);
-      useStore.getState().setImageLoadingState({
+      useScanStore.getState().setScanProgress(null);
+      useImageStore.getState().setSelectedImage(null);
+      useImageStore.getState().setImages([]);
+      useImageStore.getState().setFolders([]);
+      useImageStore.getState().setImageLoadingState({
         isLoading: false,
         loadedCount: 0,
         totalCount: 0,
-        hasMore: false
       });
       setSelectedFolder(null);
 
@@ -182,15 +174,15 @@ function Sidebar() {
       ]);
 
       // 5. 更新状态（包括 currentLibraryId，这样其他组件才会响应）
-      useStore.getState().setFolders(foldersRes.data.folders);
-      useStore.getState().setTotalImageCount(countRes.data.count);
+      useImageStore.getState().setFolders(foldersRes.folders);
+      useImageStore.getState().setTotalImageCount(countRes.count);
       setCurrentLibrary(libraryId); // 最后才更新 currentLibraryId
 
       // 7. 后台检查新素材库是否有暂停的扫描（不阻塞主流程）
       checkPausedScan(libraryId).then(scanStatus => {
         if (scanStatus && scanStatus.status === 'paused') {
           if (scanStatus.needsRescan) {
-            useStore.getState().setScanProgress({
+            useScanStore.getState().setScanProgress({
               ...scanStatus.progress,
               libraryId,
               canStop: true,
@@ -200,7 +192,7 @@ function Sidebar() {
             });
             console.log(`⏸️ 发现中断的扫描，需要继续完成`);
           } else if (scanStatus.pendingCount > 0) {
-            useStore.getState().setScanProgress({
+            useScanStore.getState().setScanProgress({
               ...scanStatus.progress,
               libraryId,
               canStop: true,
@@ -214,7 +206,7 @@ function Sidebar() {
     } catch (error) {
       console.error('Error setting current library:', error);
       alert('切换素材库失败: ' + error.message);
-      useStore.getState().setImageLoadingState({ isLoading: false });
+      useImageStore.getState().setImageLoadingState({ isLoading: false });
     } finally {
       setIsSwitching(false);
     }
@@ -241,14 +233,14 @@ function Sidebar() {
 
     try {
       // 删除素材库（会自动关闭数据库连接）
-      await libraryAPI.delete(currentLibraryId);
+      await libraryAPI.remove(currentLibraryId);
       removeLibrary(currentLibraryId);
 
       // Clear UI state
-      useStore.getState().setImages([]);
-      useStore.getState().setFolders([]);
-      useStore.getState().setSelectedImage(null);
-      useStore.getState().setSelectedFolder(null);
+      useImageStore.getState().setImages([]);
+      useImageStore.getState().setFolders([]);
+      useImageStore.getState().setSelectedImage(null);
+      useImageStore.getState().setSelectedFolder(null);
 
       // Switch to first available library if exists
       const remainingLibs = libraries.filter(lib => lib.id !== currentLibraryId);

@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import useStore from '../store/useStore';
+import { useLibraryStore } from '../stores/useLibraryStore';
+import { useImageStore } from '../stores/useImageStore';
+import { useUIStore } from '../stores/useUIStore';
+import { useScanStore } from '../stores/useScanStore';
 import { Folder, Image as ImageIcon, HardDrive } from 'lucide-react';
-import { imageAPI } from '../services/api';
+import { imageAPI } from '../api';
 
 function Dashboard() {
-    const {
-        totalImageCount,
-        folders,
-        currentLibraryId,
-        getCurrentLibrary
-    } = useStore();
+    const { currentLibraryId, getCurrentLibrary } = useLibraryStore();
+  const { totalImageCount, folders } = useImageStore();
 
     const currentLibrary = getCurrentLibrary();
     const [librarySize, setLibrarySize] = useState(0);
@@ -25,7 +24,7 @@ function Dashboard() {
         if (currentLibraryId) {
             imageAPI.getStats(currentLibraryId)
                 .then(res => {
-                    setLibrarySize(res.data.totalSize || 0);
+                    setLibrarySize(res.totalSize || 0);
                 })
                 .catch(err => {
                     console.error('Failed to fetch library stats:', err);
@@ -110,7 +109,7 @@ function Dashboard() {
                                 <div
                                     key={folder.path}
                                     className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-shadow cursor-pointer group"
-                                    onClick={() => useStore.getState().setSelectedFolder(folder.path)}
+                                    onClick={() => useImageStore.getState().setSelectedFolder(folder.path)}
                                 >
                                     <div className="flex items-center gap-3 mb-2">
                                         <Folder className="w-8 h-8 text-yellow-500 group-hover:text-yellow-400 transition-colors" />

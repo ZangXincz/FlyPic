@@ -1,24 +1,21 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Pause, Play } from 'lucide-react';
-import useStore from '../store/useStore';
-import { imageAPI, scanAPI } from '../services/api';
+import { useLibraryStore } from '../stores/useLibraryStore';
+import { useImageStore } from '../stores/useImageStore';
+import { useUIStore } from '../stores/useUIStore';
+import { useScanStore } from '../stores/useScanStore';
+import { imageAPI, scanAPI } from '../api';
 import { onUserActionStart, onUserActionEnd } from '../services/imageLoadService';
 import requestManager, { RequestType } from '../services/requestManager';
-import PaginationManager from '../utils/paginationManager';
 import imageCache from '../utils/imageCache';
+import domCleanup from '../utils/domCleanup';
 import ImageWaterfall from './ImageWaterfall';
 import Dashboard from './Dashboard';
 
 function MainContent() {
-  const {
-    currentLibraryId,
-    searchKeywords,
-    filters,
-    selectedFolder,
-    setImages,
-    scanProgress,
-    imageLoadingState
-  } = useStore();
+  const { currentLibraryId } = useLibraryStore();
+  const { searchKeywords, filters, selectedFolder, setImages, imageLoadingState, images } = useImageStore();
+  const { scanProgress } = useScanStore();
 
   // 使用 ref 跟踪最新的请求上下文
   const currentRequestContextRef = useRef(null);
@@ -27,12 +24,6 @@ function MainContent() {
   // 扫描控制
   const [scanPaused, setScanPaused] = useState(false);
   const [isStoppingOrResuming, setIsStoppingOrResuming] = useState(false);
-  
-  // 分页管理器 - 超激进内存控制
-  const paginationManagerRef = useRef(new PaginationManager({
-    pageSize: 100, // 每页100张图片（你的建议）
-    windowSize: 200 // 内存窗口：最多保留200张，超过就释放旧的
-  }));
 
   // 计算预估剩余时间
   const getEstimatedTime = () => {
@@ -54,15 +45,14 @@ function MainContent() {
     currentRequestContextRef.current = null;
   }, []);
 
-  // 加载图片 - 核心函数（使用分页）
+  // 加载图片 - 核心函数（使用后端分页，前端不再维护本地分页窗口）
   const loadImages = useCallback(async (isInitialLoad = true) => {
     if (!currentLibraryId) return;
 
     // 如果没有选中文件夹且没有搜索条件，显示 Dashboard
     if (!selectedFolder && !searchKeywords && filters.formats.length === 0) {
       setImages([]);
-      paginationManagerRef.current.reset();
-      useStore.getState().setImageLoadingState({
+      useImageStore.getState().setImageLoadingState({
         isLoading: false,
         loadedCount: 0,
         totalCount: 0,
@@ -71,9 +61,8 @@ function MainContent() {
       return;
     }
 
-    // 初始加载时重置分页
+    // 初始加载时重置本地缓存
     if (isInitialLoad) {
-      paginationManagerRef.current.reset();
       imageCache.clear(); // 清理缓存
     }
 
@@ -85,34 +74,27 @@ function MainContent() {
     const requestContext = requestManager.createRequest(RequestType.IMAGES);
     currentRequestContextRef.current = requestContext;
 
-    // 设置加载状态
-    const paginationState = paginationManagerRef.current.getCurrentState();
-    useStore.getState().setImageLoadingState({
-      isLoading: true,
-      loadedCount: paginationState.loadedCount,
-      totalCount: paginationState.totalCount,
-      hasMore: paginationState.hasMore
+    // 设置加载状态（保持当前计数不变，只更新 loading 标志）
+    useImageStore.getState().setImageLoadingState({
+      ...imageLoadingState,
+      isLoading: true
     });
 
     try {
-      // 使用分页管理器加载下一页
-      const fetchFunction = async (libraryId, offset, limit) => {
-        const params = { offset, limit };
-        if (selectedFolder) params.folder = selectedFolder;
-        if (searchKeywords) params.keywords = searchKeywords;
-        if (filters.formats?.length > 0) params.formats = filters.formats.join(',');
-
-        const response = await imageAPI.search(libraryId, params, {
-          signal: requestContext.signal
-        });
-
-        return response.data;
+      // 直接从后端加载一页数据（每次 100 张，更轻量）
+      const params = {
+        offset: isInitialLoad ? 0 : imageLoadingState.loadedCount,
+        limit: 100
       };
+      if (selectedFolder) params.folder = selectedFolder;
+      if (searchKeywords) params.keywords = searchKeywords;
+      if (filters.formats?.length > 0) params.formats = filters.formats.join(',');
 
-      const newImages = await paginationManagerRef.current.loadNextPage(
-        fetchFunction,
-        currentLibraryId
-      );
+      const response = await imageAPI.search(currentLibraryId, params, {
+        signal: requestContext.signal
+      });
+
+      const { images, total, hasMore } = response;
 
       // 检查请求是否被取消
       if (!requestManager.isValid(requestContext.id)) {
@@ -122,25 +104,23 @@ function MainContent() {
       // 标记请求完成
       requestManager.complete(requestContext.id);
 
-      // 获取所有已加载的图片
-      const allLoadedImages = paginationManagerRef.current.getLoadedImages();
-      
-      // 更新状态
-      setImages(allLoadedImages);
-      
-      const finalState = paginationManagerRef.current.getCurrentState();
-      useStore.getState().setImageLoadingState({
+      // 初次加载：设置图片数据
+      if (isInitialLoad) {
+        setImages(images);
+      }
+
+      useImageStore.getState().setImageLoadingState({
         isLoading: false,
-        loadedCount: finalState.loadedCount,
-        totalCount: finalState.totalCount,
-        hasMore: finalState.hasMore
+        loadedCount: images.length,
+        totalCount: total,
+        hasMore: hasMore || false,
       });
 
-      console.log(`[MainContent] Loaded ${newImages.length} images, total: ${finalState.loadedCount}/${finalState.totalCount}`);
+      console.log(`[MainContent] Loaded page: +${images.length}, total: ${(isInitialLoad ? images.length : imageLoadingState.loadedCount + images.length)}/${total}`);
 
       // 如果还有更多数据，恢复空闲加载
-      if (finalState.hasMore) {
-        onUserActionEnd(finalState.hasMore);
+      if (hasMore) {
+        onUserActionEnd(hasMore);
       }
 
     } catch (error) {
@@ -158,7 +138,7 @@ function MainContent() {
     }
   }, [currentLibraryId, searchKeywords, filters, selectedFolder, setImages, cancelCurrentRequest]);
 
-  // 监听文件夹变化
+  // 监听文件夹/搜索/筛选变化
   useEffect(() => {
     if (!currentLibraryId) return;
 
@@ -170,9 +150,17 @@ function MainContent() {
     // 立即取消之前的请求（关键！）
     cancelCurrentRequest();
 
-    // 重置分页并清空图片，让 UI 快速响应
-    paginationManagerRef.current.reset();
+    // 清空当前图片并设置加载中状态（防止闪烁"暂无图片"）
     setImages([]);
+    useImageStore.getState().setImageLoadingState({
+      isLoading: true,  // 关键：立即设为加载中
+      loadedCount: 0,
+      totalCount: 0,
+      hasMore: false
+    });
+    
+    // 清理图片缓存
+    imageCache.clear();
 
     // 使用防抖避免快速连续点击
     debounceTimerRef.current = setTimeout(() => {
@@ -194,7 +182,6 @@ function MainContent() {
         clearTimeout(debounceTimerRef.current);
       }
       // DOM 清理：取消待加载的图片，清理事件监听器
-      const domCleanup = require('../utils/domCleanup').default;
       domCleanup.cancelPendingLoads();
       domCleanup.removeAllEventListeners();
     };
@@ -284,16 +271,16 @@ function MainContent() {
       )}
 
       {/* Loading Progress */}
-      {imageLoadingState.hasMore && imageLoadingState.loadedCount > 0 && (
+      {imageLoadingState.totalCount > 0 && (
         <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between text-sm">
             <span className="text-gray-600 dark:text-gray-400">
-              已加载 {imageLoadingState.loadedCount} / {imageLoadingState.totalCount} 张
+              已加载 {images.length} / {imageLoadingState.totalCount} 张
             </span>
             <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-blue-500"
-                style={{ width: `${(imageLoadingState.loadedCount / imageLoadingState.totalCount) * 100}%` }}
+                style={{ width: `${imageLoadingState.totalCount ? (images.length / imageLoadingState.totalCount) * 100 : 0}%` }}
               />
             </div>
           </div>

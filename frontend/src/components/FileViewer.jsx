@@ -1,5 +1,5 @@
 import { X, ExternalLink } from 'lucide-react';
-import { imageAPI } from '../services/api';
+import { imageAPI } from '../api';
 
 /**
  * 文件查看器 - 支持视频播放和文档查看

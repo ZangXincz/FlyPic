@@ -36,6 +36,14 @@ class LightweightWatcher {
     console.log(`  Strategy: Folder timestamp polling (${this.pollInterval}ms interval)`);
     console.log(`  Memory: < 50MB (vs chokidar ~800MB)`);
 
+    // 🔍 检测离线期间的变化
+    console.log(`[LightweightWatcher] Checking offline changes...`);
+    try {
+      await this._checkOfflineChanges(libraryId, libraryPath, libraryName);
+    } catch (error) {
+      console.error(`[LightweightWatcher] Failed to check offline changes:`, error.message);
+    }
+
     // 初始化文件夹时间戳缓存
     const folderTimestamps = new Map();
     
@@ -225,7 +233,10 @@ class LightweightWatcher {
         });
 
         if (this.ioRef) {
+          console.log(`[LightweightWatcher] Emitting scanComplete event for library ${libraryId}`);
           this.ioRef.emit('scanComplete', { libraryId, results });
+        } else {
+          console.warn(`[LightweightWatcher] No Socket.IO reference, cannot emit scanComplete`);
         }
       }
     } catch (error) {
@@ -326,12 +337,48 @@ class LightweightWatcher {
   }
 
   /**
+   * 检测离线期间的变化
+   * 使用 quickSync 快速检测新增和删除的文件
+   */
+  async _checkOfflineChanges(libraryId, libraryPath, libraryName) {
+    const db = dbPool.acquire(libraryPath);
+    
+    try {
+      const { quickSync } = require('./scanner');
+      
+      // 使用 quickSync 快速检测变化（只检查新增/删除，不检查修改）
+      const results = await quickSync(libraryPath, db);
+      
+      const changes = results.added + results.deleted;
+      if (changes > 0) {
+        console.log(`[LightweightWatcher] Offline changes: +${results.added} -${results.deleted}`);
+        
+        // 发送完成事件
+        if (this.ioRef) {
+          this.ioRef.emit('scanComplete', { libraryId, results });
+        }
+      } else {
+        console.log(`[LightweightWatcher] No offline changes`);
+      }
+    } catch (error) {
+      console.error(`[LightweightWatcher] Error checking offline changes:`, error);
+    } finally {
+      dbPool.release(libraryPath);
+    }
+  }
+
+  /**
    * 停止所有监控
    */
-  unwatchAll() {
+  stopAll() {
     for (const libraryId of this.watchers.keys()) {
       this.unwatch(libraryId);
     }
+  }
+  
+  // 别名，保持兼容性
+  unwatchAll() {
+    this.stopAll();
   }
 
   /**

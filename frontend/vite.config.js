@@ -15,6 +15,20 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // 确保 Worker 文件正确打包
+        manualChunks: undefined
+      }
+    }
+  },
+  worker: {
+    // 确保 Worker 使用 ES 模块格式
+    format: 'es',
+    plugins: () => []
+  },
+  optimizeDeps: {
+    exclude: ['layoutWorker.js']
   }
 })

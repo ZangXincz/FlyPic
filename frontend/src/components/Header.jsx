@@ -1,23 +1,15 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Sun, Moon, Search, Filter, Sliders, RefreshCw } from 'lucide-react';
-import useStore from '../store/useStore';
-import { libraryAPI, scanAPI, watchAPI } from '../services/api';
+import { useLibraryStore } from '../stores/useLibraryStore';
+import { useImageStore } from '../stores/useImageStore';
+import { useUIStore } from '../stores/useUIStore';
+import { useScanStore } from '../stores/useScanStore';
+import { libraryAPI, scanAPI, watchAPI } from '../api';
 
 function Header() {
-  const { 
-    theme, 
-    toggleTheme, 
-    searchKeywords,
-    thumbnailHeight,
-    images,
-    filteredImages,
-    selectedFolder,
-    currentLibraryId,
-    setSearchKeywords,
-    setThumbnailHeight,
-    setFilteredImages,
-    mobileView
-  } = useStore();
+  const { currentLibraryId } = useLibraryStore();
+  const { searchKeywords, images, selectedFolder, setSearchKeywords } = useImageStore();
+  const { theme, toggleTheme, thumbnailHeight, setThumbnailHeight, mobileView } = useUIStore();
   
   const [showFilters, setShowFilters] = useState(false);
   const [selectedFormats, setSelectedFormats] = useState([]);
@@ -256,10 +248,7 @@ function Header() {
     });
   }, [images, selectedFormats, selectedSizes, selectedOrientation]);
 
-  // 更新 filteredImages
-  useEffect(() => {
-    setFilteredImages(filteredResult);
-  }, [filteredResult, setFilteredImages]);
+  // 注意：过滤逻辑已移至后端，这里的 filteredResult 仅用于显示统计
 
   // 切换选项
   const toggleFormat = (format) => {

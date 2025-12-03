@@ -291,7 +291,7 @@ async function getImageMetadata(imagePath) {
 
 /**
  * Generate thumbnail for a file (image/video/document)
- * 使用 480px 高度（与 Billfish 一致）
+ * 使用 480px 高度
  */
 async function generateImageThumbnails(imagePath, libraryPath) {
   const flypicDir = path.join(libraryPath, '.flypic');

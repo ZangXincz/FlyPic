@@ -3,48 +3,43 @@ import { PhotoProvider } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
 import { VariableSizeList as List } from 'react-window';
 import { Play, FileText, Palette, Music, File } from 'lucide-react';
-import useStore from '../store/useStore';
-import { imageAPI } from '../services/api';
+import { useLibraryStore } from '../stores/useLibraryStore';
+import { useImageStore } from '../stores/useImageStore';
+import { useUIStore } from '../stores/useUIStore';
+import { useScanStore } from '../stores/useScanStore';
+import { imageAPI } from '../api';
 import requestManager, { RequestType } from '../services/requestManager';
 import FileViewer from './FileViewer';
 
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 100;
 
-// Web Worker 阈值：超过此数量使用 Worker 计算布局
-const WORKER_THRESHOLD = 500;
+// 加载配置
+const LOAD_CONFIG = {
+  pageSize: 100,           // 每次加载 100 张（更轻量）
+  preloadThreshold: 300,   // 距离边界 300px 时预加载
+  overscanCount: 4,        // 预渲染 4 行（减少内存）
+};
 
 function ImageWaterfall() {
+  const { currentLibraryId } = useLibraryStore();
   const { 
-    filteredImages, 
-    currentLibraryId, 
-    thumbnailHeight, 
-    selectedImage, 
-    setSelectedImage,
-    selectedImages,
-    setSelectedImages,
-    toggleImageSelection,
-    clearSelection,
-    isResizingPanels,
-    imageLoadingState,
-    selectedFolder,
-    searchKeywords,
-    filters,
-    appendImages,
-    setImageLoadingState
-  } = useStore();
+    images, selectedImage, setSelectedImage, selectedImages, setSelectedImages, 
+    toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, 
+    searchKeywords, filters, appendImages, setImageLoadingState
+  } = useImageStore();
+  
+  const filteredImages = images;
+  const { thumbnailHeight, isResizingPanels } = useUIStore();
   const containerRef = useRef(null);
   const listRef = useRef(null);
-  const workerRef = useRef(null);
-  const requestIdRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [photoIndex, setPhotoIndex] = useState(-1);
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
   const [viewerFile, setViewerFile] = useState(null);
-  const [workerRows, setWorkerRows] = useState([]); // Worker 计算的行
 
-  // 加载更多图片
+  // 简单的向下无限滚动加载
   const loadMoreImages = useCallback(async () => {
     if (!currentLibraryId || !imageLoadingState.hasMore || imageLoadingState.isLoading) {
       return;
@@ -55,8 +50,8 @@ function ImageWaterfall() {
 
     try {
       const params = { 
-        offset: imageLoadingState.loadedCount, 
-        limit: 200 
+        offset: images.length,
+        limit: LOAD_CONFIG.pageSize 
       };
       if (selectedFolder) params.folder = selectedFolder;
       if (searchKeywords) params.keywords = searchKeywords;
@@ -70,15 +65,15 @@ function ImageWaterfall() {
         return;
       }
 
-      const { images, total, hasMore } = response.data;
+      const { images: newImages, total, hasMore } = response;
       requestManager.complete(requestContext.id);
 
-      appendImages(images);
+      appendImages(newImages);
       setImageLoadingState({
         isLoading: false,
-        loadedCount: imageLoadingState.loadedCount + images.length,
+        loadedCount: images.length + newImages.length,
         totalCount: total,
-        hasMore: hasMore || false
+        hasMore: hasMore || false,
       });
     } catch (error) {
       if (error.name === 'CanceledError' || error.name === 'AbortError') {
@@ -88,7 +83,7 @@ function ImageWaterfall() {
       requestManager.error(requestContext.id);
       setImageLoadingState({ isLoading: false });
     }
-  }, [currentLibraryId, imageLoadingState, selectedFolder, searchKeywords, filters, appendImages, setImageLoadingState]);
+  }, [currentLibraryId, imageLoadingState, images.length, selectedFolder, searchKeywords, filters, appendImages, setImageLoadingState]);
 
   // 监听容器宽度变化（使用 ResizeObserver + 去抖/阈值抑制）
   useEffect(() => {
@@ -134,7 +129,7 @@ function ImageWaterfall() {
         if (containerRef.current) {
           resizeObserver = new ResizeObserver(() => {
             // 拖动时跳过更新，避免频繁重算布局
-            if (useStore.getState().isResizingPanels) return;
+            if (useUIStore.getState().isResizingPanels) return;
             measureAndEmit();
           });
           resizeObserver.observe(containerRef.current);
@@ -175,115 +170,14 @@ function ImageWaterfall() {
     }
   }, [isResizingPanels]);
 
-  // 是否使用 Worker 计算布局
-  const useWorker = filteredImages.length > WORKER_THRESHOLD;
-
-  // 跟踪图片数据变化，用于增量计算判断
-  const prevImagesRef = useRef({ length: 0, firstId: null, libraryId: null });
-  const incrementalModeRef = useRef(false);
-  
-  useEffect(() => {
-    const prevLen = prevImagesRef.current.length;
-    const currLen = filteredImages.length;
-    const prevFirstId = prevImagesRef.current.firstId;
-    const currFirstId = filteredImages[0]?.id;
-    const prevLibraryId = prevImagesRef.current.libraryId;
-    
-    // 判断是否需要重置
-    const shouldReset = 
-      (prevLen > 0 && currLen === 0) ||  // 图片被清空
-      (currFirstId !== prevFirstId) ||    // 第一张图片变了（切换文件夹/素材库）
-      (currentLibraryId !== prevLibraryId); // 素材库变了
-    
-    if (shouldReset) {
-      // 重置 Worker 状态
-      setWorkerRows([]);
-      requestIdRef.current = 0;
-      incrementalModeRef.current = false;
-      
-      // 通知 Worker 重置缓存
-      if (workerRef.current) {
-        workerRef.current.postMessage({ reset: true, requestId: 0 });
-      }
-    } else if (currLen > prevLen) {
-      // 图片数量增加，可以使用增量模式
-      incrementalModeRef.current = true;
-    }
-    
-    prevImagesRef.current = { 
-      length: currLen, 
-      firstId: currFirstId,
-      libraryId: currentLibraryId
-    };
-  }, [filteredImages, currentLibraryId]);
-
-  // 初始化 Web Worker
-  useEffect(() => {
-    if (typeof Worker !== 'undefined') {
-      workerRef.current = new Worker(
-        new URL('../workers/layoutWorker.js', import.meta.url),
-        { type: 'module' }
-      );
-      
-      workerRef.current.onmessage = (e) => {
-        const { rows, requestId } = e.data;
-        // 只处理最新的请求结果
-        if (requestId === requestIdRef.current) {
-          setWorkerRows(rows);
-        }
-      };
-    }
-    
-    return () => {
-      if (workerRef.current) {
-        workerRef.current.terminate();
-        workerRef.current = null;
-      }
-    };
-  }, []);
-
-  // 使用 Worker 计算布局（大量图片时）
-  useEffect(() => {
-    if (!useWorker || !workerRef.current || !filteredImages.length || !containerWidth) {
-      return;
-    }
-    
-    const requestId = ++requestIdRef.current;
-    
-    // 只传输必要的字段，减少数据传输开销
-    // 对于大量图片，这可以显著减少序列化/反序列化时间
-    const minimalImages = filteredImages.map(img => ({
-      id: img.id,
-      width: img.width,
-      height: img.height,
-      filename: img.filename,
-      thumbnailPath: img.thumbnailPath,
-      path: img.path,
-      fileType: img.fileType,
-      format: img.format
-    }));
-    
-    workerRef.current.postMessage({
-      images: minimalImages,
-      containerWidth,
-      targetHeight: thumbnailHeight,
-      requestId,
-      incremental: incrementalModeRef.current
-    });
-  }, [filteredImages, containerWidth, thumbnailHeight, useWorker]);
-
-  // 同步计算布局（少量图片时直接在主线程计算）
-  const syncRows = useMemo(() => {
-    // 使用 Worker 时返回空数组，由 workerRows 提供数据
-    if (useWorker) return [];
-    
+  // 布局计算（始终在主线程同步执行）
+  const rows = useMemo(() => {
     if (!filteredImages.length || !containerWidth) {
       return [];
     }
 
     const gap = 16;
     const targetHeight = thumbnailHeight;
-    
     const calculatedRows = [];
     let currentRow = [];
     let currentRowWidthSum = 0;
@@ -354,10 +248,7 @@ function ImageWaterfall() {
     });
 
     return calculatedRows;
-  }, [filteredImages, thumbnailHeight, containerWidth, useWorker]);
-
-  // 统一使用的行数据：Worker 模式用 workerRows，否则用 syncRows
-  const rows = useWorker ? workerRows : syncRows;
+  }, [filteredImages, thumbnailHeight, containerWidth]);
 
   const getThumbnailUrl = (image) => {
     // 后端已统一转换为 camelCase
@@ -368,8 +259,8 @@ function ImageWaterfall() {
     }
     // 提取文件名（兼容反斜杠）
     const filename = thumbnailPath.replace(/\\/g, '/').split('/').pop();
-    // 统一使用 480 尺寸（与 Billfish 一致）
-    return imageAPI.getThumbnailUrl(currentLibraryId, '480', filename);
+    // 使用分片结构，不再需要 size 参数
+    return imageAPI.getThumbnailUrl(currentLibraryId, filename);
   };
 
   const getOriginalUrl = (image) => {
@@ -387,9 +278,12 @@ function ImageWaterfall() {
 
   // 获取行高（用于虚拟滚动）
   const getRowHeight = useCallback((index) => {
-    if (!rows[index] || rows[index].length === 0) return thumbnailHeight + 40;
+    if (!rows || !rows[index] || rows[index].length === 0) {
+      return thumbnailHeight + 40;
+    }
     // 行高 = 图片高度 + 文件名区域 + 行间距
-    return rows[index][0].calculatedHeight + 28 + 32;
+    const firstImage = rows[index][0];
+    return (firstImage?.calculatedHeight || thumbnailHeight) + 28 + 32;
   }, [rows, thumbnailHeight]);
 
   // 跟踪上次的行数，用于增量更新虚拟列表
@@ -402,11 +296,13 @@ function ImageWaterfall() {
       const currRowCount = rows.length;
       
       if (currRowCount > prevRowCount && prevRowCount > 0) {
-        // 增量更新：只重置新增的行
-        // 从上一个最后一行开始重置（因为最后一行可能被重新计算）
-        listRef.current.resetAfterIndex(Math.max(0, prevRowCount - 1));
-      } else {
-        // 完全重置
+        // 增量更新：只重置新增的行，保持滚动位置
+        const resetIndex = Math.max(0, prevRowCount - 1);
+        listRef.current.resetAfterIndex(resetIndex);
+        
+        // 不需要手动恢复滚动位置，react-window 会自动保持
+      } else if (currRowCount !== prevRowCount) {
+        // 完全重置（只在行数减少或首次加载时）
         listRef.current.resetAfterIndex(0);
       }
       
@@ -415,7 +311,10 @@ function ImageWaterfall() {
   }, [rows, useVirtualScroll]);
 
   // 扁平化的图片列表（用于 Shift 多选）
-  const flatImages = useMemo(() => rows.flat(), [rows]);
+  const flatImages = useMemo(() => {
+    if (!rows || rows.length === 0) return [];
+    return rows.flat();
+  }, [rows]);
 
   // 处理图片点击（支持 Ctrl/Shift 多选）
   const handleImageClick = useCallback((image, event, imageIndex) => {
@@ -535,24 +434,20 @@ function ImageWaterfall() {
     );
   };
 
+  // 加载中时显示空容器，避免闪烁"暂无图片"
+  if (!filteredImages.length && imageLoadingState.isLoading) {
+    return (
+      <div ref={containerRef} className="h-full overflow-hidden" />
+    );
+  }
+
+  // 真正没有图片时才显示提示
   if (!filteredImages.length) {
     return (
       <div ref={containerRef} className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
         <div className="text-center">
           <p className="text-lg mb-2">暂无图片</p>
           <p className="text-sm">请添加素材库或调整搜索条件</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Worker 正在计算中，显示加载状态（只在容器宽度已知且 Worker 已触发时）
-  if (useWorker && rows.length === 0 && filteredImages.length > 0 && containerWidth > 0) {
-    return (
-      <div ref={containerRef} className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
-        <div className="text-center">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-2"></div>
-          <p className="text-sm">正在计算布局...</p>
         </div>
       </div>
     );
@@ -575,7 +470,7 @@ function ImageWaterfall() {
         onIndexChange={setPhotoIndex}
       >
         {useVirtualScroll ? (
-          /* 虚拟滚动模式（>500张图片） */
+          /* 虚拟滚动模式 */
           <List
             ref={listRef}
             height={containerHeight || 600}
@@ -583,14 +478,13 @@ function ImageWaterfall() {
             itemCount={rows.length}
             itemSize={getRowHeight}
             className="p-4"
-            overscanCount={3}
+            overscanCount={LOAD_CONFIG.overscanCount}
             onScroll={({ scrollOffset, scrollDirection }) => {
-              // 滚动到接近底部时触发加载更多
+              // 向下滚动：接近底部时加载更多
               if (scrollDirection === 'forward' && imageLoadingState.hasMore && !imageLoadingState.isLoading) {
                 const totalHeight = rows.reduce((sum, _, i) => sum + getRowHeight(i), 0);
                 const scrollBottom = scrollOffset + (containerHeight || 600);
-                // 距离底部 500px 时触发加载
-                if (totalHeight - scrollBottom < 500) {
+                if (totalHeight - scrollBottom < LOAD_CONFIG.preloadThreshold) {
                   loadMoreImages();
                 }
               }
@@ -603,10 +497,10 @@ function ImageWaterfall() {
           <div 
             className="h-full overflow-y-auto p-4"
             onScroll={(e) => {
-              // 滚动到接近底部时触发加载更多
+              // 向下滚动：接近底部时加载更多
               if (imageLoadingState.hasMore && !imageLoadingState.isLoading) {
                 const { scrollTop, scrollHeight, clientHeight } = e.target;
-                if (scrollHeight - scrollTop - clientHeight < 500) {
+                if (scrollHeight - scrollTop - clientHeight < LOAD_CONFIG.preloadThreshold) {
                   loadMoreImages();
                 }
               }

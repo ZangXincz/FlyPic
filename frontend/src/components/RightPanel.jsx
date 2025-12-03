@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Copy, Download, Check, FolderDown, ArrowLeft } from 'lucide-react';
-import useStore from '../store/useStore';
-import { imageAPI } from '../services/api';
+import { useLibraryStore } from '../stores/useLibraryStore';
+import { useImageStore } from '../stores/useImageStore';
+import { useUIStore } from '../stores/useUIStore';
+import { useScanStore } from '../stores/useScanStore';
+import { imageAPI } from '../api';
 import JSZip from 'jszip';
 
 function RightPanel() {
-  const { selectedImage, selectedImages, currentLibraryId, selectedFolder, images, setMobileView, isResizingPanels, resizingSide } = useStore();
+  const { currentLibraryId } = useLibraryStore();
+  const { selectedImage, selectedImages, selectedFolder, images } = useImageStore();
+  const { setMobileView, isResizingPanels, resizingSide } = useUIStore();
   const [isMobile, setIsMobile] = useState(false);
   const [imageUrl, setImageUrl] = useState(''); // 当前显示的图片URL
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false);
@@ -15,9 +20,21 @@ function RightPanel() {
   const [isExportingFolder, setIsExportingFolder] = useState(false);
   const [folderExportProgress, setFolderExportProgress] = useState(0);
 
+  // 计算实际选中的图片数量（合并 selectedImage 和 selectedImages）
+  const actualSelectedCount = (() => {
+    if (selectedImages.length > 0) {
+      // 检查 selectedImage 是否已经在 selectedImages 中
+      if (selectedImage && !selectedImages.some(img => img.id === selectedImage.id)) {
+        return selectedImages.length + 1;
+      }
+      return selectedImages.length;
+    }
+    return selectedImage ? 1 : 0;
+  })();
+  
   // 判断是单选还是多选
-  const isMultiSelect = selectedImages.length > 0;
-  const displayImage = isMultiSelect ? selectedImages[0] : selectedImage;
+  const isMultiSelect = actualSelectedCount > 1;
+  const displayImage = selectedImages.length > 0 ? selectedImages[0] : selectedImage;
 
   // 检测移动端
   useEffect(() => {
@@ -81,14 +98,14 @@ function RightPanel() {
   }
 
   const getThumbnailUrl = () => {
-    if (!currentLibraryId || !selectedImage.thumbnail_path) return '';
+    if (!currentLibraryId || !selectedImage?.thumbnail_path) return '';
     // Handle both forward and backslash
     const filename = selectedImage.thumbnail_path.replace(/\\/g, '/').split('/').pop();
-    return imageAPI.getThumbnailUrl(currentLibraryId, '200', filename);
+    return imageAPI.getThumbnailUrl(currentLibraryId, filename);
   };
   
   const getOriginalUrl = () => {
-    if (!currentLibraryId || !selectedImage.path) return '';
+    if (!currentLibraryId || !selectedImage?.path) return '';
     return imageAPI.getOriginalUrl(currentLibraryId, selectedImage.path);
   };
 
@@ -414,10 +431,22 @@ function RightPanel() {
     });
   };
 
+  // 计算要操作的图片列表（合并 selectedImage 和 selectedImages，避免漏选）
+  const getImagesToProcess = () => {
+    if (selectedImages.length > 0) {
+      // 如果有多选，检查 selectedImage 是否已经在列表中
+      if (selectedImage && !selectedImages.some(img => img.id === selectedImage.id)) {
+        return [selectedImage, ...selectedImages];
+      }
+      return selectedImages;
+    }
+    return selectedImage ? [selectedImage] : [];
+  };
+
   // 批量复制图片
   const copyMultipleImages = async () => {
     try {
-      const imagesToCopy = isMultiSelect ? selectedImages : [selectedImage];
+      const imagesToCopy = getImagesToProcess();
       
       if (imagesToCopy.length === 1) {
         // 单张图片：直接复制
@@ -507,7 +536,7 @@ function RightPanel() {
   const exportMultipleImages = async () => {
     setIsExporting(true);
     try {
-      const imagesToExport = isMultiSelect ? selectedImages : [selectedImage];
+      const imagesToExport = getImagesToProcess();
       
       if (imagesToExport.length === 1) {
         // 单张图片直接下载
@@ -755,12 +784,12 @@ function RightPanel() {
           {imageCopied ? (
             <>
               <Check className="w-4 h-4" />
-              <span>已复制{isMultiSelect ? ` ${selectedImages.length} 张` : ''}</span>
+              <span>已复制{isMultiSelect ? ` ${actualSelectedCount} 张` : ''}</span>
             </>
           ) : (
             <>
               <Copy className="w-4 h-4" />
-              <span>复制图片{isMultiSelect ? ` (${selectedImages.length})` : ''}</span>
+              <span>复制图片{isMultiSelect ? ` (${actualSelectedCount})` : ''}</span>
             </>
           )}
         </button>
@@ -776,7 +805,7 @@ function RightPanel() {
             <span>
               {isExporting 
                 ? `打包中... ${exportProgress}%` 
-                : `导出图片${isMultiSelect ? ` (${selectedImages.length})` : ''}`
+                : `导出图片${isMultiSelect ? ` (${actualSelectedCount})` : ''}`
               }
             </span>
           </div>
