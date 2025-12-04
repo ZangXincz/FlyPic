@@ -19,19 +19,23 @@ class LibraryDatabase {
     
     this.db = new Database(this.dbPath);
     
-    // 超激进内存优化配置
-    // 使用 DELETE 模式而非 WAL（WAL 可能导致内存泄漏）
-    this.db.pragma('journal_mode = DELETE'); // 使用 DELETE 模式（更低内存）
+    // 优化数据库性能
+    this.db.pragma('journal_mode = WAL'); // 启用 WAL 模式，支持并发读写
     this.db.pragma('synchronous = NORMAL'); // 平衡性能和安全性
-    this.db.pragma('cache_size = -4096'); // 4MB 缓存（超激进：从8MB降至4MB）
-    this.db.pragma('temp_store = FILE'); // 临时表存储在磁盘
-    this.db.pragma('mmap_size = 0'); // 禁用内存映射
-    this.db.pragma('page_size = 4096'); // 4KB 页面大小（减少内存占用）
-    
-    console.log('[LibraryDatabase] Ultra-aggressive memory optimization applied:');
-    console.log('  cache_size: 4MB, temp_store: FILE, mmap_size: 0, page_size: 4KB');
+    this.db.pragma('cache_size = -64000'); // 64MB 缓存
+    this.db.pragma('temp_store = MEMORY'); // 临时表存储在内存
+    this.db.pragma('mmap_size = 268435456'); // 256MB 内存映射
     
     this.initTables();
+    
+    // 启动 WAL 定期 checkpoint（每 5 分钟）
+    this.walCheckpointInterval = setInterval(() => {
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)');
+      } catch (e) {
+        console.warn('[DB] WAL checkpoint warning:', e.message);
+      }
+    }, 300000); // 5 分钟
   }
 
   initTables() {
@@ -400,6 +404,19 @@ class LibraryDatabase {
   }
 
   close() {
+    // 清理 WAL checkpoint 定时器
+    if (this.walCheckpointInterval) {
+      clearInterval(this.walCheckpointInterval);
+      this.walCheckpointInterval = null;
+    }
+    
+    // 执行最后一次 checkpoint
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch (e) {
+      console.warn('[DB] Final WAL checkpoint warning:', e.message);
+    }
+    
     this.db.close();
   }
 }

@@ -57,7 +57,6 @@ function App() {
       ? 'http://localhost:15002'  // 开发模式：后端端口
       : window.location.origin;   // 生产模式：同源
 
-    console.log('🔌 Connecting to Socket.IO:', socketUrl);
     const socket = io(socketUrl, {
       transports: ['websocket', 'polling'], // 优先使用 websocket
       reconnection: true,
@@ -66,19 +65,34 @@ function App() {
     });
 
     socket.on('connect', () => {
-      console.log('✅ Socket.IO connected:', socket.id);
-    });
-
-    socket.on('disconnect', () => {
-      console.log('❌ Socket.IO disconnected');
+      // 连接后检查扫描状态
+      const checkScanStatus = (retries = 5, delay = 1000) => {
+        const currentLibId = useLibraryStore.getState().currentLibraryId;
+        if (!currentLibId) return;
+        
+        scanAPI.getStatus(currentLibId).then(res => {
+          const scanStatus = res.data || res;
+          
+          if (scanStatus && scanStatus.status === 'scanning' && scanStatus.progress) {
+            setScanProgress(scanStatus.progress);
+          } else if (retries > 0) {
+            setTimeout(() => checkScanStatus(retries - 1, delay), delay);
+          }
+        }).catch((err) => {
+          if (retries > 0) {
+            setTimeout(() => checkScanStatus(retries - 1, delay), delay);
+          }
+        });
+      };
+      
+      checkScanStatus(5, 1000);
     });
 
     socket.on('connect_error', (error) => {
-      console.error('❌ Socket.IO connection error:', error);
+      console.error('❌ 连接错误:', error.message);
     });
 
     socket.on('scanProgress', (progress) => {
-      // 只显示当前素材库的进度
       const currentLibId = useLibraryStore.getState().currentLibraryId;
       if (progress.libraryId === currentLibId) {
         setScanProgress(progress);
@@ -86,14 +100,9 @@ function App() {
     });
 
     socket.on('scanComplete', ({ libraryId, results }) => {
-      console.log('📊 Scan complete:', { libraryId, results });
-
-      // Only reload if this is the current library
       const currentLibId = useLibraryStore.getState().currentLibraryId;
-      console.log('🔍 Current library:', currentLibId, 'Scan library:', libraryId, 'Match:', libraryId === currentLibId);
 
       if (libraryId === currentLibId) {
-        console.log('🔄 Reloading folders and images...');
 
         // 获取当前的筛选条件
         const imageState = useImageStore.getState();
@@ -119,33 +128,22 @@ function App() {
         ]).then(([foldersRes, imagesRes, countRes]) => {
           useImageStore.getState().setFolders(foldersRes.folders);
           useImageStore.getState().setImages(imagesRes.images);
-          // 更新图片总数
           useImageStore.getState().setTotalImageCount(countRes.count);
-
-          console.log(`✅ Data reloaded, total: ${countRes.count}`);
         }).catch(err => {
-          console.error('❌ Error reloading data:', err);
+          console.error('❌ 加载数据失败:', err.message);
         }).finally(() => {
-          // 最后清除进度
           setScanProgress(null);
-          console.log('✅ Scan progress cleared');
         });
       } else {
-        console.log('⚠️ Library mismatch, skipping reload');
-        // 不是当前素材库，直接清除进度
         setScanProgress(null);
       }
     });
 
     socket.on('scanError', ({ libraryId, error }) => {
       setScanProgress(null);
-      console.error('Scan error:', error);
+      console.error('❌ 扫描错误:', error);
     });
 
-    socket.on('scanPaused', ({ libraryId, results }) => {
-      console.log('⏸️ Scan paused:', { libraryId, results });
-      // 保持进度显示，但标记为可以继续
-    });
 
     // Socket 监听已就绪后，再加载库并可能触发同步
     loadLibraries();
@@ -160,18 +158,19 @@ function App() {
   const loadLibraries = async () => {
     try {
       const response = await libraryAPI.getAll();
-      const { libraries, currentLibraryId: libId, theme: configTheme, preferences } = response;
+      const data = response.data || response;
 
-      // 立即更新基础状态
-      setLibraries(libraries);
-      setCurrentLibrary(libId);
+      setLibraries(data.libraries || []);
+      setCurrentLibrary(data.currentLibraryId);
+      
+      const libId = data.currentLibraryId;
 
       // 加载主题和偏好设置
-      if (configTheme) {
-        useUIStore.getState().setTheme(configTheme);
+      if (data.theme) {
+        useUIStore.getState().setTheme(data.theme);
       }
-      if (preferences) {
-        const { thumbnailHeight, leftPanelWidth, rightPanelWidth } = preferences;
+      if (data.preferences) {
+        const { thumbnailHeight, leftPanelWidth, rightPanelWidth } = data.preferences;
         if (thumbnailHeight) useUIStore.getState().setThumbnailHeight(thumbnailHeight);
         if (leftPanelWidth) setLeftWidth(leftPanelWidth);
         if (rightPanelWidth) setRightWidth(rightPanelWidth);
@@ -191,27 +190,20 @@ function App() {
           const countRes = await imageAPI.getCount(libId);
           useImageStore.getState().setTotalImageCount(countRes.count);
         } catch (e) {
-          console.error('Failed to get image count:', e);
+          console.error('❌ 获取图片总数失败:', e.message);
         }
 
-        console.log('📂 数据加载完成，文件监控器将自动检测变化');
-
-        // 后台检查扫描状态（不阻塞主流程）
+        // 后台检查当前素材库的扫描状态
         scanAPI.getStatus(libId).then(scanStatus => {
-          const { status, progress, pendingCount } = scanStatus;
-          if (status === 'scanning' || status === 'paused') {
-            console.log(`🔄 恢复扫描状态: ${status}, 进度: ${progress?.percent || 0}%`);
-            setScanProgress({
-              ...progress,
-              canStop: true,
-              isPaused: status === 'paused',
-              pendingCount: pendingCount
-            });
+          const { status, progress } = scanStatus;
+          if (status === 'scanning') {
+            setScanProgress(progress);
           }
-        }).catch(() => { }); // 忽略状态检查错误
+        }).catch(() => { });
       }
+      
     } catch (error) {
-      console.error('Error loading libraries:', error);
+      console.error('❌ 加载素材库失败:', error.message);
     }
   };
 
@@ -228,7 +220,7 @@ function App() {
       const response = await imageAPI.search(libraryId, params);
       useImageStore.getState().setImages(response.images);
     } catch (error) {
-      console.error('Error loading images:', error);
+      console.error('❌ 加载图片失败:', error.message);
     }
   };
 
@@ -237,7 +229,7 @@ function App() {
       const response = await imageAPI.getFolders(libraryId);
       useImageStore.getState().setFolders(response.folders);
     } catch (error) {
-      console.error('Error loading folders:', error);
+      console.error('❌ 加载文件夹失败:', error.message);
     }
   };
 
@@ -249,7 +241,7 @@ function App() {
         rightPanelWidth: right
       });
     } catch (error) {
-      console.error('Error saving panel widths:', error);
+      console.error('❌ 保存面板宽度失败:', error.message);
     }
   };
 

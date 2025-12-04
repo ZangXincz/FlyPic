@@ -13,11 +13,9 @@ class LibraryDatabase {
       fs.mkdirSync(this.flypicDir, { recursive: true });
     }
     
-    // Create thumbnails directory (480px 与 Billfish 一致)
+    // Create thumbnails directory (使用分片结构: .flypic/thumbnails/ab/hash.webp)
     const thumbDir = path.join(this.flypicDir, 'thumbnails');
-    const thumbDir480 = path.join(thumbDir, '480');
     if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true });
-    if (!fs.existsSync(thumbDir480)) fs.mkdirSync(thumbDir480, { recursive: true });
     
     this.db = new Database(this.dbPath);
     
@@ -29,6 +27,15 @@ class LibraryDatabase {
     this.db.pragma('mmap_size = 268435456'); // 256MB 内存映射
     
     this.initTables();
+    
+    // 启动 WAL 定期 checkpoint（每 5 分钟）
+    this.walCheckpointInterval = setInterval(() => {
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)');
+      } catch (e) {
+        console.warn('[DB] WAL checkpoint warning:', e.message);
+      }
+    }, 300000); // 5 分钟
   }
 
   initTables() {
@@ -165,8 +172,11 @@ class LibraryDatabase {
   }
 
   getAllImages() {
-    const stmt = this.db.prepare('SELECT * FROM images ORDER BY created_at DESC');
-    return stmt.all();
+    // ⚠️ 警告：此方法会加载所有图片到内存，仅用于调试！
+    // 生产环境请使用 searchImages() 或流式查询
+    console.warn('[DB] WARNING: getAllImages() loads all data into memory. Use searchImages() instead!');
+    const stmt = this.db.prepare('SELECT * FROM images ORDER BY created_at DESC LIMIT 1000');
+    return stmt.all(); // 限制最多 1000 条
   }
 
   searchImages(keywords, filters = {}, pagination = null) {
@@ -220,8 +230,9 @@ class LibraryDatabase {
     if (pagination && typeof pagination.offset === 'number' && typeof pagination.limit === 'number') {
       const timings = {};
       
-      // 先获取数据（快速）
-      const query = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+      // 只选择必要字段，减少内存占用
+      const essentialFields = 'id, path, filename, size, format, width, height, thumbnail_path, folder';
+      const query = `SELECT ${essentialFields} ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
       const paginatedParams = [...params, pagination.limit, pagination.offset];
       
       let queryStart = Date.now();
@@ -393,6 +404,19 @@ class LibraryDatabase {
   }
 
   close() {
+    // 清理 WAL checkpoint 定时器
+    if (this.walCheckpointInterval) {
+      clearInterval(this.walCheckpointInterval);
+      this.walCheckpointInterval = null;
+    }
+    
+    // 执行最后一次 checkpoint
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch (e) {
+      console.warn('[DB] Final WAL checkpoint warning:', e.message);
+    }
+    
     this.db.close();
   }
 }

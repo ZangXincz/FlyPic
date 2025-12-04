@@ -38,8 +38,7 @@ function ensureFolderChain(db, folderPath) {
     
     // 安全检查：确保 db 对象有 getFolderByPath 方法
     if (typeof db.getFolderByPath !== 'function') {
-      console.error('[ensureFolderChain] Error: db.getFolderByPath is not a function');
-      console.error('[ensureFolderChain] db object keys:', Object.keys(db));
+      console.error('❌ db.getFolderByPath 不是函数');
       return;
     }
     
@@ -116,7 +115,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         }
         results.added++;
       } catch (error) {
-        console.error(`Error processing added file ${file}:`, error.message);
+        console.error(`❌ 处理新增文件失败 ${file}:`, error.message);
       }
     }
 
@@ -137,7 +136,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         affectedFolders.add(folder);
         results.modified++;
       } catch (error) {
-        console.error(`Error processing changed file ${file}:`, error.message);
+        console.error(`❌ 处理修改文件失败 ${file}:`, error.message);
       }
     }
 
@@ -158,7 +157,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         }
         results.deleted++;
       } catch (error) {
-        console.error(`Error deleting file ${file}:`, error.message);
+        console.error(`❌ 删除文件失败 ${file}:`, error.message);
       }
     }
 
@@ -173,7 +172,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         if (parent && parent !== '.') affectedFolders.add(parent);
         results.foldersRemoved++;
       } catch (error) {
-        console.error(`Error deleting directory ${dir}:`, error.message);
+        console.error(`❌ 删除目录失败 ${dir}:`, error.message);
       }
     }
 
@@ -183,14 +182,14 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         try {
           db.updateFolderImageCount(folderPath);
         } catch (error) {
-          console.error(`Error updating folder count ${folderPath}:`, error.message);
+          console.error(`❌ 更新文件夹计数失败 ${folderPath}:`, error.message);
         }
       }
     });
 
     return results;
   } catch (error) {
-    console.error('Error in applyChangesFromEvents:', error);
+    console.error('❌ 应用变化失败:', error.message);
     throw error;
   }
 }
@@ -310,7 +309,7 @@ async function processImage(imagePath, libraryPath, db, dryRun = false) {
 
     return { status: 'processed', path: relativePath };
   } catch (error) {
-    console.error('Error processing image:', imagePath, error);
+    console.error('❌ 处理图片失败:', path.basename(imagePath), error.message);
     return { status: 'error', path: imagePath, error: error.message };
   }
 }
@@ -338,20 +337,18 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     // 动态导入 p-limit
     const pLimit = (await import('p-limit')).default;
 
-    // 超激进内存控制：限制并发数为 2（防止 Sharp 内存泄漏）
-    const concurrency = 2; // 固定为 2，避免 Sharp 并发导致内存泄漏
+    // 根据 CPU 核心数动态调整并发数
+    const os = require('os');
+    const cpuCount = os.cpus().length;
+    const concurrency = Math.max(4, Math.min(16, cpuCount - 1));
     const limit = pLimit(concurrency);
-
-    console.log(`🚀 Starting scan with concurrency: ${concurrency} (memory-optimized)`);
 
     if (resumeFiles && resumeFiles.length > 0) {
       // 继续扫描：使用待处理文件列表
       files = resumeFiles;
-      console.log(`▶️ Resuming scan with ${files.length} pending files`);
     } else {
       // 新扫描：获取所有文件
       files = await getAllImageFiles(libraryPath);
-      console.log(`Found ${files.length} images in library`);
 
       // Get folder structure
       const folders = await getFolderStructure(libraryPath);
@@ -366,7 +363,7 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
 
     // 初始化扫描状态
     if (libraryId) {
-      scanManager.startScan(libraryId, total);
+      scanManager.startScan(libraryId, total, libraryPath);
     }
 
     const results = {
@@ -381,7 +378,8 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
 
     // 批量写入缓冲区
     let writeBuffer = [];
-    const WRITE_BATCH_SIZE = 100; // 每 100 条写入一次数据库
+    const WRITE_BATCH_SIZE = 50; // 每 50 条写入一次数据库（降低内存峰值）
+    const STREAM_BATCH_SIZE = 200; // 每批处理 200 个文件（流式处理）
 
     // 批量写入函数（事务）
     const batchWrite = db.db.transaction((items) => {
@@ -394,11 +392,6 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
 
     // 处理单个文件的包装函数
     const processFile = async (file) => {
-      // 检查是否需要停止
-      if (libraryId && scanManager.shouldStop(libraryId)) {
-        return { status: 'stopped', file };
-      }
-
       try {
         const result = await processImage(file, libraryPath, db, true); // true = dryRun (不直接写入DB)
         return result;
@@ -407,71 +400,82 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
       }
     };
 
-    // 创建所有任务
-    const tasks = files.map(file => limit(async () => {
-      // 如果已经停止，直接返回
-      if (results.stopped) return;
+    // 流式处理：分批处理文件，避免一次性创建大量 Promise
+    for (let batchStart = 0; batchStart < total; batchStart += STREAM_BATCH_SIZE) {
+      const batchEnd = Math.min(batchStart + STREAM_BATCH_SIZE, total);
+      const batchFiles = files.slice(batchStart, batchEnd);
 
-      const result = await processFile(file);
+      // 处理当前批次
+      const batchTasks = batchFiles.map(file => limit(async () => {
+        const result = await processFile(file);
 
-      if (result.status === 'stopped') {
-        results.stopped = true;
-        return;
-      }
+        // 更新统计
+        if (result.status === 'processed') results.processed++;
+        else if (result.status === 'skipped') results.skipped++;
+        else if (result.status === 'error') results.errors++;
 
-      // 更新统计
-      if (result.status === 'processed') results.processed++;
-      else if (result.status === 'skipped') results.skipped++;
-      else if (result.status === 'error') results.errors++;
+        // 添加到写入缓冲区
+        if (result.status === 'processed') {
+          writeBuffer.push(result);
 
-      // 添加到写入缓冲区
-      if (result.status === 'processed') {
-        writeBuffer.push(result);
-
-        // 缓冲区满，执行批量写入
-        if (writeBuffer.length >= WRITE_BATCH_SIZE) {
-          batchWrite(writeBuffer);
-          writeBuffer = [];
-        }
-      }
-
-      processedCount++;
-
-      // 报告进度 (每完成 10 个文件报告一次，避免过于频繁)
-      if (processedCount % 10 === 0 || processedCount === total) {
-        const current = processedCount;
-
-        if (libraryId) {
-          scanManager.updateProgress(libraryId, current, total);
+          // 缓冲区满，执行批量写入
+          if (writeBuffer.length >= WRITE_BATCH_SIZE) {
+            batchWrite(writeBuffer);
+            writeBuffer = []; // 清空缓冲区，释放内存
+          }
         }
 
-        if (onProgress) {
-          const elapsed = Date.now() - startTime;
-          const avgTimePerImage = elapsed / current;
-          const remaining = total - current;
-          const estimatedTimeLeft = Math.round((remaining * avgTimePerImage) / 1000);
+        processedCount++;
 
-          onProgress({
-            total,
-            current,
-            percent: Math.round((current / total) * 100),
-            currentFile: file,
-            estimatedTimeLeft,
-            canStop: true
-          });
+        // 报告进度 (每完成 10 个文件报告一次)
+        if (processedCount % 10 === 0 || processedCount === total) {
+          const current = processedCount;
+
+          if (libraryId) {
+            scanManager.updateProgress(libraryId, current, total);
+          }
+
+          if (onProgress) {
+            const elapsed = Date.now() - startTime;
+            const avgTimePerImage = elapsed / current;
+            const remaining = total - current;
+            const estimatedTimeLeft = Math.round((remaining * avgTimePerImage) / 1000);
+
+            onProgress({
+              total,
+              current,
+              percent: Math.round((current / total) * 100),
+              currentFile: file,
+              estimatedTimeLeft
+            });
+          }
         }
+
+        return result;
+      }));
+
+      // 等待当前批次完成
+      await Promise.all(batchTasks);
+
+      // 批次完成后，写入剩余缓冲区并释放内存
+      if (writeBuffer.length > 0) {
+        batchWrite(writeBuffer);
+        writeBuffer = [];
       }
 
-      // 性能日志
-      if (processedCount > 0 && processedCount % 1000 === 0) {
+      // 每1000个文件输出一次进度（减少日志）
+      if (processedCount % 1000 === 0) {
         const elapsed = (Date.now() - startTime) / 1000;
         const speed = processedCount / elapsed;
-        console.log(`⚡ Performance: ${speed.toFixed(1)} images/sec, ${processedCount}/${total} completed`);
+        const percent = ((processedCount / total) * 100).toFixed(1);
+        console.log(`⚡ ${processedCount}/${total} (${percent}%) | ${speed.toFixed(1)} 张/秒`);
       }
-    }));
-
-    // 等待所有任务完成
-    await Promise.all(tasks);
+      
+      // 每 1000 个文件触发一次 GC
+      if (processedCount > 0 && processedCount % 1000 === 0 && global.gc) {
+        global.gc();
+      }
+    }
 
     // 写入剩余的缓冲区数据
     if (writeBuffer.length > 0) {
@@ -479,16 +483,8 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
       writeBuffer = [];
     }
 
-    // 处理停止情况
-    if (results.stopped) {
-      const pendingFiles = files.slice(processedCount);
-      scanManager.stopScan(libraryId, pendingFiles);
-      console.log(`⏸️ Scan stopped at ${processedCount}/${total}, ${pendingFiles.length} files pending`);
-      return results;
-    }
-
     const totalTime = (Date.now() - startTime) / 1000;
-    console.log(`✅ Scan completed in ${totalTime.toFixed(1)}s, speed: ${(total / totalTime).toFixed(1)} images/sec`);
+    console.log(`✅ 扫描完成: ${total} 个文件 (${totalTime.toFixed(1)}秒, ${(total / totalTime).toFixed(1)} 张/秒)`);
 
     // Update folder image counts
     db.updateAllFolderCounts();
@@ -497,11 +493,9 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     if (libraryId) {
       scanManager.completeScan(libraryId);
     }
-
-    console.log('Scan complete:', results);
     return results;
   } catch (error) {
-    console.error('Error scanning library:', error);
+    console.error('❌ 扫描失败:', error.message);
     if (libraryId) {
       scanManager.completeScan(libraryId);
     }
@@ -534,17 +528,14 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     const toCheck = [...currentPaths].filter(p => dbPaths.has(p));
     let toDelete = [...dbPaths].filter(p => !currentPaths.has(p));
 
-    console.log(`Sync: ${toAdd.length} new, ${toCheck.length} to check, ${toDelete.length} deleted`);
+    console.log(`🔄 同步: +${toAdd.length} 检查${toCheck.length} -${toDelete.length}`);
 
     // 安全检查：如果要删除的文件数量超过数据库中文件的50%，可能是路径匹配问题
     const dbImageCount = dbPaths.size;
     if (toDelete.length > 0 && dbImageCount > 0) {
       const deleteRatio = toDelete.length / dbImageCount;
       if (deleteRatio > 0.5 && toDelete.length > 10) {
-        console.warn(`⚠️ 安全检查：要删除 ${toDelete.length}/${dbImageCount} (${(deleteRatio * 100).toFixed(1)}%) 的文件，这可能是路径匹配问题，跳过删除操作`);
-        console.log('示例 currentPath:', [...currentPaths].slice(0, 3));
-        console.log('示例 dbPath:', [...dbPaths].slice(0, 3));
-        // 清空 toDelete，不执行删除
+        console.warn(`⚠️ 安全检查: 跳过删除 ${toDelete.length}/${dbImageCount} 个文件 (${(deleteRatio * 100).toFixed(1)}%)`);
         toDelete = [];
       }
     }
@@ -584,7 +575,9 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
       return existing.file_hash !== currentHash;
     }).length;
 
-    console.log(`Found ${modifiedCount} modified files (skipped, hash unchanged)`);
+    if (modifiedCount > 0) {
+      console.log(`📝 发现 ${modifiedCount} 个修改文件`);
+    }
 
     // Delete removed files
     for (const relativePath of toDelete) {
@@ -594,7 +587,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
 
     // Rebuild folder structure if there are changes or forced
     if (toAdd.length > 0 || toDelete.length > 0 || forceRebuildFolders) {
-      console.log('Rebuilding folder structure...');
+      console.log('📂 重建文件夹结构...');
 
       // Get current folder structure from file system
       const currentFolders = await getFolderStructure(libraryPath);
@@ -618,10 +611,11 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
         db.deleteFolder(folder.path);
       });
 
-      console.log(`Folders: +${foldersToAdd.length}, -${foldersToDelete.length}`);
+      if (foldersToAdd.length > 0 || foldersToDelete.length > 0) {
+        console.log(`📂 文件夹变化: +${foldersToAdd.length} -${foldersToDelete.length}`);
+      }
 
       // Update folder image counts
-      console.log('Updating folder image counts...');
       const affectedFolders = new Set();
 
       // Collect all affected folders (including parent folders)
@@ -641,12 +635,10 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
       affectedFolders.forEach(folderPath => {
         db.updateFolderImageCount(folderPath);
       });
-
-      console.log(`Updated ${affectedFolders.size} folder counts`);
     }
 
     const totalTime = (Date.now() - startTime) / 1000;
-    console.log(`✅ Sync completed in ${totalTime.toFixed(1)}s`);
+    console.log(`✅ 同步完成 (${totalTime.toFixed(1)}秒)`);
 
     return {
       added: toAdd.length,
@@ -654,7 +646,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
       deleted: toDelete.length
     };
   } catch (error) {
-    console.error('Error syncing library:', error);
+    console.error('❌ 同步失败:', error.message);
     throw error;
   }
 }
@@ -687,7 +679,7 @@ async function quickSync(libraryPath, db) {
   if (toDelete.length > 0 && dbImageCount > 0) {
     const deleteRatio = toDelete.length / dbImageCount;
     if (deleteRatio > 0.5 && toDelete.length > 10) {
-      console.warn(`⚠️ 安全检查：跳过删除 ${toDelete.length} 个文件`);
+      console.warn(`⚠️ 跳过删除 ${toDelete.length} 个文件`);
       toDelete = [];
     }
   }
@@ -703,7 +695,7 @@ async function quickSync(libraryPath, db) {
       }
       await processImage(fullPath, libraryPath, db);
     } catch (err) {
-      console.error(`Error adding ${relativePath}:`, err.message);
+      console.error(`❌ 添加失败 ${relativePath}:`, err.message);
     }
   }
 
@@ -719,7 +711,7 @@ async function quickSync(libraryPath, db) {
 
   const elapsed = Date.now() - startTime;
   if (toAdd.length > 0 || toDelete.length > 0) {
-    console.log(`Quick sync: +${toAdd.length} -${toDelete.length} (${elapsed}ms)`);
+    console.log(`⚡ 快速同步: +${toAdd.length} -${toDelete.length} (${elapsed}ms)`);
   }
 
   return { added: toAdd.length, deleted: toDelete.length };

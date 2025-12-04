@@ -3,6 +3,16 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// 配置 Sharp 内存限制（防止内存泄漏）
+sharp.cache({
+  memory: 50, // 最大缓存 50MB（默认 50MB）
+  files: 0,   // 禁用文件缓存
+  items: 20   // 最多缓存 20 个操作
+});
+
+// 设置并发限制
+sharp.concurrency(1); // 一次只处理 1 张图片
+
 // 支持的文件格式（确定可以生成缩略图的）
 const IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heif', 'heic', 'svg'];
 
@@ -81,10 +91,15 @@ function isImageFile(filename) {
  * Calculate file hash for change detection
  */
 function calculateFileHash(filePath) {
-  const fileBuffer = fs.readFileSync(filePath);
+  let fileBuffer = fs.readFileSync(filePath);
   const hashSum = crypto.createHash('md5');
   hashSum.update(fileBuffer);
-  return hashSum.digest('hex');
+  const hash = hashSum.digest('hex');
+  
+  // 显式释放 Buffer
+  fileBuffer = null;
+  
+  return hash;
 }
 
 /**
@@ -157,7 +172,7 @@ function getThumbnailConfig(originalWidth, originalHeight, targetHeight = 200) {
 async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
   try {
     // 先读取文件到 Buffer，避免 Sharp 锁定文件句柄
-    const inputBuffer = fs.readFileSync(inputPath);
+    let inputBuffer = fs.readFileSync(inputPath);
 
     // Get image metadata from buffer
     const metadata = await sharp(inputBuffer).metadata();
@@ -219,16 +234,17 @@ async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
       })
       .toFile(outputPath);
 
+    // 显式释放 Buffer 内存
+    inputBuffer = null;
+    
+    // 强制 GC（如果可用）
+    if (global.gc && Math.random() < 0.1) { // 10% 概率执行 GC
+      global.gc();
+    }
+
     // 获取文件大小
     const stats = fs.statSync(outputPath);
     const finalSize = stats.size;
-
-    // 可选：输出详细信息（每100张输出一次，避免日志过多）
-    const shouldLog = Math.random() < 0.01; // 1% 概率输出
-    if (shouldLog) {
-      const sizeKB = (finalSize / 1024).toFixed(1);
-      console.log(`📸 Thumbnail: ${config.megaPixels}MP → ${config.width}x${config.height} (${sizeKB}KB, Q${quality}, ratio ${downscaleRatio.toFixed(1)}x)`);
-    }
 
     return {
       width: config.width,
@@ -291,15 +307,13 @@ async function getImageMetadata(imagePath) {
 
 /**
  * Generate thumbnail for a file (image/video/document)
- * 使用 480px 高度
+ * 使用 480px 高度（与 Billfish 一致）
  */
 async function generateImageThumbnails(imagePath, libraryPath) {
   const flypicDir = path.join(libraryPath, '.flypic');
   const relativePath = path.relative(libraryPath, imagePath);
   const hash = crypto.createHash('md5').update(relativePath).digest('hex');
   const fileType = getFileType(imagePath);
-
-  console.log(`📝 Processing file: ${path.basename(imagePath)}, type: ${fileType}`);
 
   // Sharding: use first 2 chars of hash for subdirectories (e.g. /ab/)
   const shard1 = hash.slice(0, 2);
@@ -317,36 +331,32 @@ async function generateImageThumbnails(imagePath, libraryPath) {
     thumbnailResult = await generateThumbnail(imagePath, out480, 480);
   } else if (fileType === 'video') {
     // 视频：尝试提取封面
-    console.log(`🎬 Extracting video thumbnail for: ${path.basename(imagePath)}`);
     thumbnailResult = await extractVideoThumbnail(imagePath, out480);
 
     // 如果提取失败，生成占位图
     if (!thumbnailResult) {
-      console.log(`🎬 Generating video placeholder for: ${path.basename(imagePath)}`);
       thumbnailResult = await generatePlaceholderThumbnail(out480, 'video', ext);
     }
   } else if (fileType === 'design') {
     // 设计文件：尝试提取嵌入缩略图（仅 PSD）
     if (ext.toLowerCase() === 'psd') {
-      console.log(`🎨 Extracting PSD thumbnail for: ${path.basename(imagePath)}`);
       thumbnailResult = await extractPSDThumbnail(imagePath, out480);
     }
 
     // 如果提取失败或不是 PSD，生成占位图
     if (!thumbnailResult) {
-      console.log(`🎨 Generating design placeholder for: ${path.basename(imagePath)}`);
       thumbnailResult = await generatePlaceholderThumbnail(out480, 'design', ext);
     }
   } else {
     // 其他类型（音频/文档/未知）：生成占位图
-    console.log(`📦 Generating ${fileType} placeholder for: ${path.basename(imagePath)}`);
     thumbnailResult = await generatePlaceholderThumbnail(out480, fileType, ext);
   }
 
-  console.log(`✅ Thumbnail generated: ${path.basename(out480)}, ${thumbnailResult.width}x${thumbnailResult.height}, ${(thumbnailResult.size / 1024).toFixed(1)}KB`);
+  // 返回相对于 libraryPath 的路径（包含 .flypic 前缀）
+  const thumbnailPath = path.relative(libraryPath, out480).replace(/\\/g, '/');
 
   return {
-    thumbnail_path: path.relative(flypicDir, out480),
+    thumbnail_path: thumbnailPath,
     thumbnail_size: thumbnailResult.size,
     width: thumbnailResult.width,
     height: thumbnailResult.height,
@@ -399,7 +409,6 @@ async function extractPSDThumbnail(psdPath, outputPath) {
 
         // 先获取原始缩略图尺寸
         const metadata = await sharp(jpegData).metadata();
-        console.log(`  📐 PSD embedded thumbnail: ${metadata.width}x${metadata.height}`);
 
         // 使用高质量缩放，保持宽高比
         const aspectRatio = metadata.width / metadata.height;
@@ -449,7 +458,6 @@ async function extractPSDThumbnail(psdPath, outputPath) {
           .toFile(outputPath);
 
         const stats = fs.statSync(outputPath);
-        console.log(`  ✅ PSD thumbnail extracted: ${(stats.size / 1024).toFixed(1)}KB`);
         return {
           width: targetWidth,
           height: targetHeight,
@@ -496,7 +504,6 @@ async function extractVideoThumbnail(videoPath, outputPath) {
     if (fs.existsSync(tempJpg)) {
       // 先获取实际尺寸
       const metadata = await sharp(tempJpg).metadata();
-      console.log(`  📐 Video frame: ${metadata.width}x${metadata.height}`);
 
       // 保持宽高比缩放到 480 高度
       const aspectRatio = metadata.width / metadata.height;
@@ -516,7 +523,6 @@ async function extractVideoThumbnail(videoPath, outputPath) {
       fs.unlinkSync(tempJpg);  // 删除临时 JPG
 
       const stats = fs.statSync(outputPath);
-      console.log(`  ✅ Video thumbnail extracted: ${targetWidth}x${targetHeight}, ${(stats.size / 1024).toFixed(1)}KB`);
       return {
         width: targetWidth,
         height: targetHeight,
@@ -615,18 +621,6 @@ async function generatePlaceholderThumbnail(outputPath, type, label) {
     size: stats.size,
     path: outputPath
   };
-}
-
-/**
- * 获取文件类型对应的图标（Unicode）
- */
-function getIconForType(type) {
-  const icons = {
-    video: '🎬',
-    document: '📄',
-    special: '🎨'
-  };
-  return icons[type] || '📁';
 }
 
 module.exports = {

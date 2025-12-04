@@ -6,9 +6,14 @@ const LibraryDatabase = require('./db');
  */
 class DatabasePool {
   constructor() {
+    // 单例模式：确保只有一个实例，避免多个定时器
+    if (DatabasePool.instance) {
+      return DatabasePool.instance;
+    }
+    DatabasePool.instance = this;
+    
     this.connections = new Map(); // libraryPath -> { db, lastUsed, refCount }
-    this.maxConnections = 1; // 最大连接数：1
-    this.maxIdleTime = 60000; // 60秒未使用则关闭（保持连接复用，减少创建/关闭）
+    this.maxIdleTime = 60000; // 60秒未使用则关闭
     this.cleanupInterval = null;
     
     // 启动定期清理
@@ -23,16 +28,6 @@ class DatabasePool {
     let conn = this.connections.get(libraryPath);
     
     if (!conn) {
-      // 强制执行最大连接数限制：如果已有连接，先关闭所有空闲连接
-      if (this.connections.size >= this.maxConnections) {
-        for (const [path, existingConn] of this.connections.entries()) {
-          if (existingConn.refCount === 0) {
-            console.log(`[DBPool] Max connections reached, closing idle: ${path}`);
-            this.close(path);
-          }
-        }
-      }
-      
       // 创建新连接
       const db = new LibraryDatabase(libraryPath);
       conn = {
@@ -41,7 +36,6 @@ class DatabasePool {
         refCount: 0
       };
       this.connections.set(libraryPath, conn);
-      console.log(`[DBPool] Created new connection for: ${libraryPath} (total: ${this.connections.size}/${this.maxConnections})`);
     }
     
     // 更新使用时间和引用计数
@@ -72,17 +66,19 @@ class DatabasePool {
         // 强制设置引用计数为0
         conn.refCount = 0;
         
-        // 关闭数据库连接
+        // 执行 checkpoint 确保 WAL 写入主数据库
         if (conn.db && conn.db.db) {
-          // 注意：db.js 使用 DELETE 模式而非 WAL，无需 checkpoint
-          // 直接关闭连接即可
-          conn.db.close();
+          try {
+            conn.db.db.pragma('wal_checkpoint(TRUNCATE)');
+          } catch (e) {
+            console.warn(`[DBPool] WAL checkpoint warning:`, e.message);
+          }
         }
+        conn.db.close();
         
         this.connections.delete(libraryPath);
-        console.log(`[DBPool] Closed connection for: ${libraryPath}`);
       } catch (error) {
-        console.error(`[DBPool] Error closing connection:`, error);
+        console.error(`❌ 关闭数据库连接失败:`, error.message);
         // 即使出错也删除引用
         this.connections.delete(libraryPath);
       }
@@ -93,27 +89,28 @@ class DatabasePool {
    * 关闭所有连接
    */
   closeAll() {
-    console.log(`[DBPool] Closing all connections (${this.connections.size} total)`);
-    
-    for (const [path, conn] of this.connections.entries()) {
-      try {
-        // 强制设置引用计数为0
-        conn.refCount = 0;
-        
-        // 注意：db.js 使用 DELETE 模式而非 WAL，无需 checkpoint
-        // 直接关闭连接即可
-        conn.db.close();
-        console.log(`[DBPool] Closed connection for: ${path}`);
-      } catch (error) {
-        console.error(`[DBPool] Error closing connection for ${path}:`, error);
-      }
-    }
-    this.connections.clear();
-    
+    // 先清理定时器，避免在关闭过程中触发清理
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+    
+    for (const [path, conn] of this.connections.entries()) {
+      try {
+        // 执行 checkpoint 确保 WAL 写入主数据库
+        if (conn.db && conn.db.db) {
+          try {
+            conn.db.db.pragma('wal_checkpoint(TRUNCATE)');
+          } catch (e) {
+            console.warn(`[DBPool] WAL checkpoint warning:`, e.message);
+          }
+        }
+        conn.db.close();
+      } catch (error) {
+        console.error(`❌ 关闭数据库连接失败:`, error.message);
+      }
+    }
+    this.connections.clear();
   }
 
   /**
@@ -121,7 +118,6 @@ class DatabasePool {
    * 与 closeAll() 相同，但提供明确的语义
    */
   forceCloseAll() {
-    console.log('[DBPool] Force closing all connections (emergency cleanup)');
     this.closeAll();
   }
 
@@ -144,14 +140,11 @@ class DatabasePool {
       toClose.forEach(path => this.close(path));
       
       if (toClose.length > 0) {
-        console.log(`[DBPool] Cleaned up ${toClose.length} idle connections`);
-        
         // 关闭连接后立即强制 GC
         if (global.gc) {
           for (let i = 0; i < 3; i++) {
             global.gc();
           }
-          console.log(`[DBPool] Forced GC after closing connections`);
         }
       }
     }, 10000); // 每10秒检查一次（更频繁）
@@ -191,10 +184,6 @@ class DatabasePool {
     }
     
     toClose.forEach(path => this.close(path));
-    
-    if (toClose.length > 0) {
-      console.log(`[DBPool] Cleared ${toClose.length} idle connections`);
-    }
   }
 }
 

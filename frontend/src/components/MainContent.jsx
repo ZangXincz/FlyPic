@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Pause, Play } from 'lucide-react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
-import { imageAPI, scanAPI } from '../api';
+import { imageAPI } from '../api';
 import { onUserActionStart, onUserActionEnd } from '../services/imageLoadService';
 import requestManager, { RequestType } from '../services/requestManager';
 import imageCache from '../utils/imageCache';
@@ -21,9 +20,6 @@ function MainContent() {
   const currentRequestContextRef = useRef(null);
   // 文件夹切换防抖
   const debounceTimerRef = useRef(null);
-  // 扫描控制
-  const [scanPaused, setScanPaused] = useState(false);
-  const [isStoppingOrResuming, setIsStoppingOrResuming] = useState(false);
 
   // 计算预估剩余时间
   const getEstimatedTime = () => {
@@ -116,8 +112,6 @@ function MainContent() {
         hasMore: hasMore || false,
       });
 
-      console.log(`[MainContent] Loaded page: +${images.length}, total: ${(isInitialLoad ? images.length : imageLoadingState.loadedCount + images.length)}/${total}`);
-
       // 如果还有更多数据，恢复空闲加载
       if (hasMore) {
         onUserActionEnd(hasMore);
@@ -187,83 +181,26 @@ function MainContent() {
     };
   }, [cancelCurrentRequest]);
 
-  // 停止扫描
-  const handleStopScan = async () => {
-    if (!currentLibraryId || isStoppingOrResuming) return;
-    setIsStoppingOrResuming(true);
-    try {
-      await scanAPI.stop(currentLibraryId);
-      setScanPaused(true);
-    } catch (error) {
-      console.error('Error stopping scan:', error);
-    } finally {
-      setIsStoppingOrResuming(false);
-    }
-  };
-
-  // 继续扫描
-  const handleResumeScan = async () => {
-    if (!currentLibraryId || isStoppingOrResuming) return;
-    setIsStoppingOrResuming(true);
-    try {
-      if (scanProgress?.needsRescan) {
-        await scanAPI.sync(currentLibraryId);
-      } else {
-        await scanAPI.resume(currentLibraryId);
-      }
-      setScanPaused(false);
-    } catch (error) {
-      console.error('Error resuming scan:', error);
-    } finally {
-      setIsStoppingOrResuming(false);
-    }
-  };
-
-  // 同步扫描暂停状态
-  useEffect(() => {
-    if (!scanProgress) {
-      setScanPaused(false);
-    } else if (scanProgress.isPaused) {
-      setScanPaused(true);
-    } else if (scanProgress.percent === 100) {
-      setScanPaused(false);
-    }
-  }, [scanProgress]);
-
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
-      {/* Scan Progress */}
+      {/* Scan Progress - 简化版，无暂停按钮 */}
       {scanProgress && (
-        <div className={`p-4 border-b ${scanPaused
-          ? 'bg-yellow-50 dark:bg-yellow-900 border-yellow-200 dark:border-yellow-700'
-          : 'bg-blue-50 dark:bg-blue-900 border-blue-200 dark:border-blue-700'
-        }`}>
+        <div className="p-4 border-b bg-blue-50 dark:bg-blue-900 border-blue-200 dark:border-blue-700">
           <div className="flex items-center justify-between mb-2">
-            <div className={`text-sm font-medium ${scanPaused ? 'text-yellow-700 dark:text-yellow-300' : 'text-blue-700 dark:text-blue-300'}`}>
-              {scanPaused ? '扫描已暂停' : scanProgress?.status === 'preparing' ? '正在准备扫描...' : '正在扫描素材库，期间建议勿操作，否则会影响扫描速度'}
+            <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
+              {scanProgress?.status === 'preparing' ? '正在准备扫描...' : '正在扫描素材库...'}
             </div>
-            <div className="flex items-center gap-2">
-              <span className={`text-sm ${scanPaused ? 'text-yellow-600' : 'text-blue-600'}`}>
-                {scanProgress?.percent || 0}%
-              </span>
-              {(scanProgress?.canStop || scanPaused) && (
-                <button
-                  onClick={scanPaused ? handleResumeScan : handleStopScan}
-                  disabled={isStoppingOrResuming}
-                  className={`p-1.5 rounded-md ${scanPaused ? 'bg-green-500 hover:bg-green-600' : 'bg-yellow-500 hover:bg-yellow-600'} text-white`}
-                >
-                  {scanPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-                </button>
-              )}
-            </div>
+            <span className="text-sm text-blue-600 dark:text-blue-400">
+              {scanProgress?.percent || 0}%
+            </span>
           </div>
-          <div className={`w-full rounded-full h-2 mb-2 ${scanPaused ? 'bg-yellow-200' : 'bg-blue-200'}`}>
+          <div className="w-full rounded-full h-2 mb-2 bg-blue-200 dark:bg-blue-800">
             <div
-              className={`h-2 rounded-full transition-all ${scanPaused ? 'bg-yellow-500' : 'bg-blue-500'}`}
+              className="h-2 rounded-full transition-all bg-blue-500"
               style={{ width: `${scanProgress?.percent || 0}%` }}
             />
           </div>
-          <div className={`text-xs ${scanPaused ? 'text-yellow-600' : 'text-blue-600'}`}>
+          <div className="text-xs text-blue-600 dark:text-blue-400">
             已处理 {scanProgress?.current || 0} / {scanProgress?.total || 0} 张图片
             {getEstimatedTime() && ` · ${getEstimatedTime()}`}
           </div>

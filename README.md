@@ -1,6 +1,6 @@
 # FlyPic 飞图
 
-专为飞牛 fnOS 设计的轻量、快速、稳定的图像素材检索浏览应用。
+主要飞牛 fnOS 设计的轻量、快速、稳定的图像素材检索浏览应用。
 
 ## ✨ 核心特性
 
@@ -8,18 +8,19 @@
 - 🛡️ **非侵入式** - 只在素材库目录创建 .flypic 文件夹存储索引和缩略图，不修改任何原始文件
 - 🔄 **实时同步** - 基于 Worker Thread 的文件监控，自动检测新增、删除、修改
 - 🌐 **远程访问** - 支持 FN Connect 远程访问，随时随地浏览管理图片素材库
-- 🎨 **现代界面** - Google Photos 风格瀑布流布局，支持亮色/暗色主题，响应式设计
+- 🎨 **现代界面** - 固定行高瀑布流布局，支持亮色/暗色主题，响应式设计
 - 🔍 **智能搜索** - 多关键词组合搜索，高级筛选（格式/大小/方向）
 - 📱 **移动适配** - 响应式设计，手机上也能流畅使用
 - 🆓 **开源免费** - 100% 开源，MIT 协议
+- 其他平台
 
 ## 🛠️ 技术栈
 
-**前端**：React 18 + Vite 5 + TailwindCSS + Zustand + react-window + react-photo-view + Lucide Icons
+**前端**：React 18 + Vite 5 + TailwindCSS + Zustand + react-window + react-photo-view
 
-**后端**：Node.js + Express + Sharp + better-sqlite3 + Socket.IO + chokidar
+**后端**：Node.js + Express + Sharp + better-sqlite3 + Socket.IO
 
-**架构**：三层架构（Config → Model → Service → Route）+ 模块化前端（Store → API → Components）
+**架构**：三层架构（Config → Model → Service → Route）+ 模块化前端（Store → Hooks → API）
 
 ## 🚀 快速开始
 

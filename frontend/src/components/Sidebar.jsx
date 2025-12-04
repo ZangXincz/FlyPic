@@ -7,11 +7,11 @@ import { libraryAPI, scanAPI, imageAPI } from '../api';
 import requestManager from '../services/requestManager';
 import { onUserActionStart } from '../services/imageLoadService';
 
-// 检查素材库是否有暂停的扫描
-const checkPausedScan = async (libraryId) => {
+// 检查素材库扫描状态
+const checkScanStatus = async (libraryId) => {
   try {
     const response = await scanAPI.getStatus(libraryId);
-    return response.data;
+    return response.data || response;
   } catch (error) {
     return null;
   }
@@ -20,6 +20,7 @@ const checkPausedScan = async (libraryId) => {
 function Sidebar() {
   const { libraries, currentLibraryId, setCurrentLibrary, addLibrary, removeLibrary } = useLibraryStore();
   const { folders, selectedFolder, totalImageCount, setSelectedFolder } = useImageStore();
+  const { isScanning } = useScanStore();
 
   const [showAddLibrary, setShowAddLibrary] = useState(false);
   const [newLibraryName, setNewLibraryName] = useState('');
@@ -54,6 +55,12 @@ function Sidebar() {
   }, []);
 
   const handleAddLibrary = async () => {
+    // 扫描期间禁止添加素材库
+    if (isScanning()) {
+      alert('扫描进行中，请稍后再试或暂停扫描');
+      return;
+    }
+    
     if (!newLibraryName.trim()) {
       alert('请输入素材库名称');
       return;
@@ -137,7 +144,29 @@ function Sidebar() {
       console.log('✅ 扫描已启动，请等待进度显示...');
     } catch (error) {
       console.error('❌ Error adding library:', error);
-      alert('添加素材库失败: ' + error.message);
+      
+      // 提取错误信息
+      let errorMessage = error.message || '未知错误';
+      
+      // 如果是后端返回的错误响应
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+      
+      // 特殊处理权限错误
+      if (errorMessage.includes('无法访问') || errorMessage.includes('权限') || errorMessage.includes('数据共享')) {
+        alert(
+          '⚠️ 文件夹权限不足\n\n' +
+          errorMessage + '\n\n' +
+          '操作步骤：\n' +
+          '1. 应用中心找到 FlyPic 应用\n' +
+          '2. 点击 应用设置\n' +
+          '3. 将该文件夹添加到 FlyPic 应用的读写权限'
+        );
+      } else {
+        alert('添加素材库失败: ' + errorMessage);
+      }
+      
       useScanStore.getState().setScanProgress(null);
       setIsAdding(false);
     }
@@ -145,6 +174,12 @@ function Sidebar() {
 
   const handleLibraryClick = async (libraryId) => {
     if (libraryId === currentLibraryId) return;
+    
+    // 扫描期间禁止切换素材库
+    if (isScanning()) {
+      alert('扫描进行中，请稍后再试或暂停扫描');
+      return;
+    }
 
     setIsSwitching(true);
     try {
@@ -178,31 +213,12 @@ function Sidebar() {
       useImageStore.getState().setTotalImageCount(countRes.count);
       setCurrentLibrary(libraryId); // 最后才更新 currentLibraryId
 
-      // 7. 后台检查新素材库是否有暂停的扫描（不阻塞主流程）
-      checkPausedScan(libraryId).then(scanStatus => {
-        if (scanStatus && scanStatus.status === 'paused') {
-          if (scanStatus.needsRescan) {
-            useScanStore.getState().setScanProgress({
-              ...scanStatus.progress,
-              libraryId,
-              canStop: true,
-              isPaused: true,
-              pendingCount: scanStatus.progress?.total - scanStatus.progress?.current || 0,
-              needsRescan: true
-            });
-            console.log(`⏸️ 发现中断的扫描，需要继续完成`);
-          } else if (scanStatus.pendingCount > 0) {
-            useScanStore.getState().setScanProgress({
-              ...scanStatus.progress,
-              libraryId,
-              canStop: true,
-              isPaused: true,
-              pendingCount: scanStatus.pendingCount
-            });
-            console.log(`⏸️ 发现暂停的扫描，待处理: ${scanStatus.pendingCount} 张`);
-          }
+      // 7. 检查新素材库是否正在扫描
+      checkScanStatus(libraryId).then(scanStatus => {
+        if (scanStatus && scanStatus.status === 'scanning') {
+          useScanStore.getState().setScanProgress(scanStatus.progress);
         }
-      }).catch(() => { }); // 忽略状态检查错误
+      }).catch(() => { });
     } catch (error) {
       console.error('Error setting current library:', error);
       alert('切换素材库失败: ' + error.message);
@@ -215,6 +231,12 @@ function Sidebar() {
 
   const handleDeleteLibrary = async () => {
     if (!currentLibraryId) return;
+    
+    // 扫描期间禁止删除素材库
+    if (isScanning()) {
+      alert('扫描进行中，请稍后再试或暂停扫描');
+      return;
+    }
 
     const currentLib = libraries.find(lib => lib.id === currentLibraryId);
     if (!currentLib) return;
@@ -453,12 +475,16 @@ function Sidebar() {
               onChange={(e) => {
                 const value = e.target.value;
                 if (value === '__add__') {
+                  if (isScanning()) {
+                    alert('扫描进行中，请稍后再试或暂停扫描');
+                    return;
+                  }
                   setShowAddLibrary(true);
                 } else if (value) {
                   handleLibraryClick(value);
                 }
               }}
-              disabled={isSwitching}
+              disabled={isSwitching || isScanning()}
               className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ paddingRight: '2rem' }}
             >
@@ -480,8 +506,9 @@ function Sidebar() {
           {currentLibraryId && libraries.length > 0 && (
             <button
               onClick={handleDeleteLibrary}
-              className="px-3 py-2 border border-red-300 dark:border-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 text-red-600 dark:text-red-400 transition-colors"
-              title="删除当前素材库"
+              disabled={isScanning()}
+              className="px-3 py-2 border border-red-300 dark:border-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 text-red-600 dark:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isScanning() ? "扫描进行中，无法删除" : "删除当前素材库"}
             >
               <Trash2 className="w-4 h-4" />
             </button>

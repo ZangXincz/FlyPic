@@ -4,8 +4,8 @@
   "description": "FlyPic backend server",
   "main": "server.js",
   "scripts": {
-    "dev": "cross-env PORT=15002 nodemon server.js",
-    "start": "node server.js"
+    "dev": "cross-env PORT=15002 nodemon --expose-gc server.js",
+    "start": "node --expose-gc server.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.2.2",

@@ -109,8 +109,6 @@ class ImageCache {
     
     this.cache.clear();
     this.accessOrder = [];
-    
-    console.log('[ImageCache] Cache cleared');
   }
 
   /**
@@ -124,7 +122,6 @@ class ImageCache {
     // First item in access order is least recently used
     const lruImageId = this.accessOrder[0];
     
-    console.log(`[ImageCache] Evicting LRU: ${lruImageId}`);
     this.remove(lruImageId);
     this.stats.evictionCount++;
   }
@@ -195,7 +192,7 @@ class ImageCache {
    */
   logStats() {
     const stats = this.getStats();
-    console.log('[ImageCache] Statistics:', stats);
+    // 仅在需要时输出统计信息
   }
 }
 

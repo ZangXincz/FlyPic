@@ -1,191 +1,238 @@
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+/**
+ * FlyPic 服务器入口（新架构）
+ * 使用重构后的 Service 层和 Model 层
+ */
+
 const http = require('http');
 const { Server } = require('socket.io');
-const fileWatcher = require('./utils/fileWatcher');
+const path = require('path');
+const fs = require('fs');
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_DIST ? false : ['http://localhost:5173', 'http://localhost:3000'],
-    methods: ['GET', 'POST']
-  }
-});
+// 导入新架构的应用
+const { createApp } = require('./src/app');
+
+// 导入现有的依赖（保持兼容）
+const config = require('./utils/config');
+const dbPool = require('./database/dbPool');
+const scanner = require('./utils/scanner');
+const scanManager = require('./utils/scanManager');
+const lightweightWatcher = require('./utils/lightweightWatcher');
+const MemoryMonitor = require('./utils/memoryMonitor');
+const CleanupManager = require('./utils/cleanupManager');
 
 const PORT = process.env.PORT || 15002;
 
-// Auto-detect frontend dist path
+// 自动检测前端构建目录
 let FRONTEND_DIST = process.env.FRONTEND_DIST;
 if (!FRONTEND_DIST) {
-  // Try common locations
   const possiblePaths = [
-    path.join(__dirname, 'public'),           // 飞牛 fnOS 打包后的位置
-    path.join(__dirname, '../frontend/dist'), // 开发环境
+    path.join(__dirname, 'public'),
+    path.join(__dirname, '../frontend/dist'),
     path.join(__dirname, '../public'),
     path.join(__dirname, '../../frontend/dist')
   ];
 
   for (const p of possiblePaths) {
-    if (require('fs').existsSync(p)) {
+    if (fs.existsSync(p)) {
       FRONTEND_DIST = p;
-      console.log('✅ Found frontend at:', p);
+      console.log('✅ 前端目录:', p);
       break;
     }
   }
 
   if (!FRONTEND_DIST) {
-    console.log('⚠️  Frontend not found, tried:', possiblePaths);
+    console.log('⚠️ 未找到前端，API模式');
   }
 }
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// API Routes
-const libraryRouter = require('./routes/library');
-const imageRouter = require('./routes/image');
-const scanRouter = require('./routes/scan');
-const watchRouter = require('./routes/watch');
-app.use('/api/library', libraryRouter);
-app.use('/api/image', imageRouter);
-app.use('/api/scan', scanRouter);
-app.use('/api/watch', watchRouter);
-
-// Serve static files (production)
+// 设置环境变量
 if (FRONTEND_DIST) {
-  console.log('📁 Serving frontend from:', FRONTEND_DIST);
-  app.use(express.static(FRONTEND_DIST));
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
-    }
-  });
+  process.env.FRONTEND_DIST = FRONTEND_DIST;
 }
 
-// Socket.IO for real-time updates
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-  });
-});
-
-// Make io accessible to routes
-app.set('io', io);
-
-// Make fileWatcher accessible to routes
-app.set('fileWatcher', fileWatcher);
-
-server.listen(PORT, () => {
-  console.log(`🚀 FlyPic server running on http://localhost:${PORT}`);
-
-  // 只为当前选中的素材库启动文件监控和快速同步
-  const { loadConfig } = require('./utils/config');
-  const config = loadConfig();
-  const currentLibraryId = config.currentLibraryId;
-  const currentLibrary = config.libraries.find(lib => lib.id === currentLibraryId);
-
-  if (currentLibrary) {
-    console.log(`📡 启动当前素材库监控: ${currentLibrary.name}`);
-
-    // 启动文件监控
-    try {
-      fileWatcher.watch(currentLibrary.id, io);
-      console.log(`  ✅ 文件监控已启动`);
-    } catch (err) {
-      console.log(`  ❌ 文件监控失败: ${err.message}`);
-    }
-
-    // 快速同步检测离线变化
-    console.log('🔄 检测离线期间的文件变化...');
-    const { quickSync } = require('./utils/scanner');
-    const dbPool = require('./database/dbPool');
-
-    (async () => {
-      try {
-        const db = dbPool.acquire(currentLibrary.path);
-        const results = await quickSync(currentLibrary.path, db);
-        dbPool.release(currentLibrary.path);
-
-        const changes = results.added + results.deleted;
-        if (changes > 0) {
-          console.log(`  📊 ${currentLibrary.name}: +${results.added} -${results.deleted}`);
-          io.emit('scanComplete', { libraryId: currentLibrary.id, results });
-        } else {
-          console.log(`  ✅ ${currentLibrary.name}: 无变化`);
-        }
-      } catch (err) {
-        console.log(`  ❌ ${currentLibrary.name}: ${err.message}`);
-      }
-      console.log('✅ 启动检查完成');
-    })();
-  } else {
-    console.log('📭 未选中素材库，等待用户操作...');
+// 创建 Socket.IO 服务器
+const server = http.createServer();
+const io = new Server(server, {
+  cors: {
+    origin: FRONTEND_DIST ? false : ['http://localhost:5173', 'http://localhost:3000'],
+    methods: ['GET', 'POST']
   }
 });
 
-// Graceful shutdown - 优雅关闭，释放所有资源
-const gracefulShutdown = (signal) => {
-  console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
-
-  try {
-    // 1. 停止所有文件监控
-    console.log('📡 Stopping file watchers...');
-    fileWatcher.unwatchAll();
-
-    // 2. 关闭所有数据库连接
-    console.log('💾 Closing database connections...');
-    const dbPool = require('./database/dbPool');
-    dbPool.closeAll();
-
-    // 3. 关闭 HTTP 服务器
-    console.log('🌐 Closing HTTP server...');
-    server.close(() => {
-      console.log('✅ All resources released, goodbye!');
-      process.exit(0);
-    });
-
-    // 如果10秒内没有正常关闭，强制退出
-    setTimeout(() => {
-      console.error('⚠️ Forced shutdown after timeout');
-      process.exit(1);
-    }, 10000);
-
-  } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
-  }
+// 准备依赖注入
+// 包装 config 函数为对象接口
+const configManager = {
+  load: () => config.loadConfig(),
+  save: (data) => config.saveConfig(data),
+  addLibrary: (name, path) => config.addLibrary(name, path),
+  removeLibrary: (id) => config.removeLibrary(id),
+  updateLibrary: (id, updates) => config.updateLibrary(id, updates),
+  setCurrentLibrary: (id) => config.setCurrentLibrary(id),
+  updatePreferences: (prefs) => config.updatePreferences(prefs),
+  updateTheme: (theme) => config.updateTheme(theme)
 };
 
-// 监听各种退出信号
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));   // Ctrl+C
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // kill
-process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));   // 终端关闭
+const dependencies = {
+  configManager,
+  dbPool,
+  scanner,
+  scanManager,
+  lightweightWatcher,
+  io
+};
 
-// Windows 特殊处理（Ctrl+C）
-if (process.platform === 'win32') {
-  const readline = require('readline');
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
+// 创建 Express 应用（使用新架构）
+const app = createApp(dependencies);
+
+// 将 Express 应用挂载到 HTTP 服务器
+server.on('request', app);
+
+// Socket.IO 连接处理
+io.on('connection', (socket) => {
+  console.log('✅ 客户端连接:', socket.id);
+
+  socket.on('disconnect', () => {
+    console.log('❌ 客户端断开:', socket.id);
+  });
+});
+
+// 启动内存监控（开发模式：每30秒输出RSS）
+const memoryMonitor = new MemoryMonitor({ 
+  devMode: true,
+  devLogInterval: 30000 // 30秒
+});
+memoryMonitor.start();
+
+// 启动清理管理器
+const cleanupManager = new CleanupManager({ dbPool });
+cleanupManager.startRoutineCleanup();
+
+// 启动服务器
+server.listen(PORT, () => {
+  console.log('\n🚀 FlyPic 服务器已启动');
+  console.log(`📡 端口: ${PORT}`);
+  console.log(`🔌 Socket.IO 就绪`);
+  if (FRONTEND_DIST) console.log(`📁 前端: ${FRONTEND_DIST}`);
+  console.log('');
+
+  try {
+    const currentConfig = config.loadConfig();
+    
+    // 恢复所有素材库的扫描状态
+    if (currentConfig.libraries && currentConfig.libraries.length > 0) {
+      scanManager.restoreAllStates(currentConfig.libraries);
+      
+      // 检查是否有未完成的扫描，自动继续
+      const activeStates = scanManager.getAllActiveStates();
+      if (Object.keys(activeStates).length > 0) {
+        console.log(`📊 发现 ${Object.keys(activeStates).length} 个活跃扫描`);
+      }
+      
+      for (const [libraryId, state] of Object.entries(activeStates)) {
+        const lib = currentConfig.libraries.find(l => l.id === libraryId);
+        if (lib && state.status === 'scanning') {
+          console.log(`🔄 恢复扫描: ${lib.name} (${state.progress?.percent || 0}%)`);
+          
+          // 立即恢复扫描状态（让前端能检测到）
+          scanManager.scanStates.set(libraryId, {
+            status: 'scanning',
+            progress: state.progress || { current: 0, total: 0, percent: 0 },
+            startTime: state.startTime || Date.now()
+          });
+          
+          // 立即向所有连接的客户端推送扫描状态
+          io.emit('scanProgress', {
+            libraryId,
+            ...state.progress,
+            resuming: true
+          });
+          
+          // 延迟启动实际扫描，等服务完全准备好
+          setTimeout(() => {
+            const db = dbPool.acquire(lib.path);
+            // 继续扫描（从中断处继续）
+            scanner.scanLibrary(
+              lib.path,
+              db,
+              (progress) => {
+                io.emit('scanProgress', { libraryId, ...progress });
+              },
+              libraryId
+            ).then(() => {
+              scanManager.completeScan(libraryId);
+              io.emit('scanComplete', { libraryId });
+              dbPool.release(lib.path);
+              console.log(`✅ 扫描完成: ${lib.name}`);
+            }).catch((err) => {
+              console.error(`❌ 扫描失败: ${lib.name}`, err.message);
+              scanManager.completeScan(libraryId);
+              dbPool.release(lib.path);
+            });
+          }, 2000);
+        }
+      }
+    }
+    
+    // 为当前素材库启动文件监控
+    if (currentConfig.currentLibraryId) {
+      const currentLib = currentConfig.libraries.find(lib => lib.id === currentConfig.currentLibraryId);
+      if (currentLib) {
+        lightweightWatcher.watch(currentLib.id, currentLib.path, currentLib.name, io);
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ 初始化失败:', e.message);
+  }
+});
+
+// 标记是否正在关闭
+let isShuttingDown = false;
+
+// 优雅关闭
+const shutdown = async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log('\n🛑 正在关闭服务器...');
+
+  // 停止接受新连接
+  server.close(() => {
+    console.log('✅ HTTP 服务器已关闭');
   });
 
-  rl.on('SIGINT', () => {
-    process.emit('SIGINT');
-  });
-}
+  // 停止监控
+  memoryMonitor.stop();
+  cleanupManager.stopRoutineCleanup();
 
-// 捕获未处理的异常
+  // 停止所有文件监控
+  lightweightWatcher.stopAll();
+
+  // 等待扫描任务完成当前批次（最多等2秒）
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // 关闭所有数据库连接
+  dbPool.closeAll();
+
+  console.log('✅ 关闭完成');
+  process.exit(0);
+};
+
+// 导出关闭状态供其他模块检查
+module.exports.isShuttingDown = () => isShuttingDown;
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// 错误处理
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-  gracefulShutdown('uncaughtException');
+  console.error('💥 未捕获异常:', error.message);
+  shutdown();
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  gracefulShutdown('unhandledRejection');
+  console.error('💥 未处理的Promise拒绝:', reason);
+  shutdown();
 });
+
+// 导出供测试使用
+module.exports = { app, server, io };
