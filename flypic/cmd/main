@@ -16,8 +16,17 @@ if [ -f "$PORT_CONF" ]; then
 fi
 APP_PORT="${APP_PORT:-15002}"
 
+# 导出飞牛环境变量，确保 Node.js 进程能访问
+export TRIM_PKGVAR
+export TRIM_PKGETC
+export TRIM_APPDEST
+export TRIM_PKGHOME
+export TRIM_DATA_SHARE_PATHS
+export DATA_DIR="${DATA_DIR}"
+export PORT="${APP_PORT}"
+
 # 启动命令
-CMD="DATA_DIR=${DATA_DIR} PORT=${APP_PORT} node ${TRIM_APPDEST}/server/server.js"
+CMD="node ${TRIM_APPDEST}/server/server.js"
 
 log_msg() {
     local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
