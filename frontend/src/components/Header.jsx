@@ -8,18 +8,20 @@ import { libraryAPI, scanAPI, watchAPI } from '../api';
 
 function Header() {
   const { currentLibraryId } = useLibraryStore();
-  const { searchKeywords, images, selectedFolder, setSearchKeywords } = useImageStore();
+  const { searchKeywords, originalImages, selectedFolder, setSearchKeywords, filters, setFilters, resetFilters } = useImageStore();
   const { theme, toggleTheme, thumbnailHeight, setThumbnailHeight, mobileView } = useUIStore();
   
   const [showFilters, setShowFilters] = useState(false);
-  const [selectedFormats, setSelectedFormats] = useState([]);
-  const [selectedSizes, setSelectedSizes] = useState([]);
-  const [selectedOrientation, setSelectedOrientation] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
   const [localSearchValue, setLocalSearchValue] = useState(searchKeywords);
   const searchDebounceRef = useRef(null);
+  
+  // 从全局 store 获取筛选状态
+  const selectedFormats = filters.formats || [];
+  const selectedSizes = filters.sizes || [];
+  const selectedOrientation = filters.orientation || '';
 
   // 检测移动端
   useEffect(() => {
@@ -33,10 +35,8 @@ function Header() {
 
   // 监听文件夹变化，自动清空筛选
   useEffect(() => {
-    setSelectedFormats([]);
-    setSelectedSizes([]);
-    setSelectedOrientation('');
-  }, [selectedFolder]);
+    resetFilters();
+  }, [selectedFolder, resetFilters]);
 
   // 🎯 内存优化：禁用前端启动 chokidar 文件监控
   // 后端已经使用轻量级监控器（智能轮询），不需要前端启动
@@ -167,9 +167,9 @@ function Header() {
     return false;
   };
 
-  // 分析当前文件夹的所有图片，生成可选项（只在images变化时计算一次）
+  // 分析原始图片列表，生成可选项（基于 originalImages，不受筛选影响）
   const filterOptions = useMemo(() => {
-    if (images.length === 0) {
+    if (originalImages.length === 0) {
       return { formats: [], sizes: [], hasHorizontal: false, hasVertical: false };
     }
 
@@ -178,7 +178,7 @@ function Header() {
     let hasHorizontal = false;
     let hasVertical = false;
 
-    images.forEach(img => {
+    originalImages.forEach(img => {
       // 格式
       if (img.format) {
         formats.add(img.format.toLowerCase());
@@ -199,79 +199,31 @@ function Header() {
       hasHorizontal,
       hasVertical
     };
-  }, [images]);
+  }, [originalImages]);
 
-  // 使用 useMemo 缓存筛选结果，避免重复计算
-  const filteredResult = useMemo(() => {
-    // 如果没有任何筛选条件，直接返回原始图片
-    if (selectedFormats.length === 0 && 
-        selectedSizes.length === 0 && 
-        !selectedOrientation) {
-      return images;
-    }
-
-    // 预先转换为 Set 以提高查找性能
-    const formatSet = new Set(selectedFormats);
-    const sizeSet = new Set(selectedSizes);
-
-    return images.filter(img => {
-      // 格式筛选
-      if (formatSet.size > 0) {
-        if (!formatSet.has(img.format?.toLowerCase())) {
-          return false;
-        }
-      }
-
-      // 文件大小筛选
-      if (sizeSet.size > 0) {
-        const sizeKB = img.size / 1024;
-        let matchesSize = false;
-        
-        for (const range of sizeSet) {
-          if (matchSizeRange(sizeKB, range)) {
-            matchesSize = true;
-            break;
-          }
-        }
-        
-        if (!matchesSize) return false;
-      }
-
-      // 横竖图筛选
-      if (selectedOrientation === 'horizontal') {
-        if (img.width <= img.height) return false;
-      } else if (selectedOrientation === 'vertical') {
-        if (img.height <= img.width) return false;
-      }
-
-      return true;
-    });
-  }, [images, selectedFormats, selectedSizes, selectedOrientation]);
-
-  // 注意：过滤逻辑已移至后端，这里的 filteredResult 仅用于显示统计
-
-  // 切换选项
+  // 切换选项 - 同步到全局 store
   const toggleFormat = (format) => {
-    setSelectedFormats(prev => 
-      prev.includes(format) ? prev.filter(f => f !== format) : [...prev, format]
-    );
+    const newFormats = selectedFormats.includes(format) 
+      ? selectedFormats.filter(f => f !== format) 
+      : [...selectedFormats, format];
+    setFilters({ formats: newFormats });
   };
 
   const toggleSize = (size) => {
-    setSelectedSizes(prev => 
-      prev.includes(size) ? prev.filter(s => s !== size) : [...prev, size]
-    );
+    const newSizes = selectedSizes.includes(size) 
+      ? selectedSizes.filter(s => s !== size) 
+      : [...selectedSizes, size];
+    setFilters({ sizes: newSizes });
   };
 
   const toggleOrientation = (orientation) => {
-    setSelectedOrientation(prev => prev === orientation ? '' : orientation);
+    const newOrientation = selectedOrientation === orientation ? '' : orientation;
+    setFilters({ orientation: newOrientation });
   };
 
   // 清除筛选
   const clearFilters = () => {
-    setSelectedFormats([]);
-    setSelectedSizes([]);
-    setSelectedOrientation('');
+    setFilters({ formats: [], sizes: [], orientation: '' });
   };
 
   const handleThemeToggle = async () => {

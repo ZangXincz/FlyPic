@@ -61,7 +61,7 @@ class LibraryService {
       } catch (writeError) {
         console.log(`[LibraryService] No write permission: ${normalizedPath}`);
         throw new ValidationError(
-          '无法访问该文件夹。请在飞牛 fnOS 的"数据共享"中将此文件夹添加到 FlyPic 应用的访问权限。',
+          '无法访问该文件夹。将此文件夹添加到 FlyPic 应用的访问权限。',
           'permission'
         );
       }
@@ -69,7 +69,7 @@ class LibraryService {
       if (readError.code === 'EACCES' || readError.code === 'EPERM') {
         console.log(`[LibraryService] No access permission: ${normalizedPath}`);
         throw new ValidationError(
-          '无法访问该文件夹。请在飞牛 fnOS 的"数据共享"中将此文件夹添加到 FlyPic 应用的访问权限。',
+          '无法访问该文件夹。将此文件夹添加到 FlyPic 应用的访问权限。',
           'permission'
         );
       }

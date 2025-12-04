@@ -20,11 +20,12 @@ export const useImageStore = create((set, get) => ({
   searchKeywords: '',
   filters: {
     formats: [],
-    minSize: null,
-    maxSize: null,
-    startDate: null,
-    endDate: null
+    sizes: [],        // 文件大小范围筛选
+    orientation: '',  // 横竖图筛选: 'horizontal' | 'vertical' | ''
   },
+  
+  // 原始图片列表（用于生成筛选选项，不受筛选影响）
+  originalImages: [],
   
   // 加载状态
   imageLoadingState: {
@@ -37,12 +38,16 @@ export const useImageStore = create((set, get) => ({
   // 图片操作
   setImages: (images) => set({ images }),
   
+  // 设置原始图片（用于筛选选项）
+  setOriginalImages: (images) => set({ originalImages: images }),
+  
   // 追加图片（向下滚动时）
   appendImages: (newImages) => set((state) => ({
-    images: [...state.images, ...newImages]
+    images: [...state.images, ...newImages],
+    originalImages: [...state.originalImages, ...newImages]
   })),
   
-  clearImages: () => set({ images: [] }),
+  clearImages: () => set({ images: [], originalImages: [] }),
   
   // 选择操作
   setSelectedImage: (image) => set({ selectedImage: image }),
@@ -76,10 +81,8 @@ export const useImageStore = create((set, get) => ({
     searchKeywords: '',
     filters: {
       formats: [],
-      minSize: null,
-      maxSize: null,
-      startDate: null,
-      endDate: null
+      sizes: [],
+      orientation: ''
     }
   }),
   

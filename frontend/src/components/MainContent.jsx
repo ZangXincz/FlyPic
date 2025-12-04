@@ -13,7 +13,7 @@ import Dashboard from './Dashboard';
 
 function MainContent() {
   const { currentLibraryId } = useLibraryStore();
-  const { searchKeywords, filters, selectedFolder, setImages, imageLoadingState, images } = useImageStore();
+  const { searchKeywords, filters, selectedFolder, setImages, setOriginalImages, imageLoadingState, images } = useImageStore();
   const { scanProgress } = useScanStore();
 
   // 使用 ref 跟踪最新的请求上下文
@@ -100,9 +100,10 @@ function MainContent() {
       // 标记请求完成
       requestManager.complete(requestContext.id);
 
-      // 初次加载：设置图片数据
+      // 初次加载：设置图片数据和原始图片（用于筛选选项）
       if (isInitialLoad) {
         setImages(images);
+        setOriginalImages(images);
       }
 
       useImageStore.getState().setImageLoadingState({
@@ -130,7 +131,7 @@ function MainContent() {
         currentRequestContextRef.current = null;
       }
     }
-  }, [currentLibraryId, searchKeywords, filters, selectedFolder, setImages, cancelCurrentRequest]);
+  }, [currentLibraryId, searchKeywords, selectedFolder, setImages, setOriginalImages, cancelCurrentRequest]);
 
   // 监听文件夹/搜索/筛选变化
   useEffect(() => {
@@ -166,7 +167,7 @@ function MainContent() {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [currentLibraryId, searchKeywords, filters, selectedFolder, loadImages, cancelCurrentRequest, setImages]);
+  }, [currentLibraryId, searchKeywords, selectedFolder, loadImages, cancelCurrentRequest, setImages]);
 
   // 组件卸载时清理
   useEffect(() => {

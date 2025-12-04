@@ -14,6 +14,36 @@ import FileViewer from './FileViewer';
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 100;
 
+// 解析大小字符串为 KB
+const parseSizeToKB = (sizeStr) => {
+  const match = sizeStr.match(/^(\d+(?:\.\d+)?)(B|KB|MB|GB)$/);
+  if (!match) return 0;
+  const value = parseFloat(match[1]);
+  const unit = match[2];
+  switch (unit) {
+    case 'B': return value / 1024;
+    case 'KB': return value;
+    case 'MB': return value * 1024;
+    case 'GB': return value * 1024 * 1024;
+    default: return 0;
+  }
+};
+
+// 匹配大小范围
+const matchSizeRange = (sizeKB, range) => {
+  if (range.startsWith('>')) {
+    const minStr = range.substring(1).trim();
+    const minKB = parseSizeToKB(minStr);
+    return sizeKB >= minKB;
+  } else if (range.includes(' - ')) {
+    const [minStr, maxStr] = range.split(' - ').map(s => s.trim());
+    const minKB = parseSizeToKB(minStr);
+    const maxKB = parseSizeToKB(maxStr);
+    return sizeKB >= minKB && sizeKB < maxKB;
+  }
+  return false;
+};
+
 // 加载配置
 const LOAD_CONFIG = {
   pageSize: 100,           // 每次加载 100 张（更轻量）
@@ -29,8 +59,52 @@ function ImageWaterfall() {
     searchKeywords, filters, appendImages, setImageLoadingState
   } = useImageStore();
   
-  const filteredImages = images;
   const { thumbnailHeight, isResizingPanels } = useUIStore();
+  
+  // 前端筛选逻辑：基于 filters 过滤图片
+  const filteredImages = useMemo(() => {
+    const { formats, sizes, orientation } = filters;
+    
+    // 如果没有任何筛选条件，直接返回原始图片
+    if ((!formats || formats.length === 0) && 
+        (!sizes || sizes.length === 0) && 
+        !orientation) {
+      return images;
+    }
+
+    return images.filter(img => {
+      // 格式筛选
+      if (formats && formats.length > 0) {
+        if (!formats.includes(img.format?.toLowerCase())) {
+          return false;
+        }
+      }
+
+      // 文件大小筛选
+      if (sizes && sizes.length > 0) {
+        const sizeKB = img.size / 1024;
+        let matchesSize = false;
+        
+        for (const range of sizes) {
+          if (matchSizeRange(sizeKB, range)) {
+            matchesSize = true;
+            break;
+          }
+        }
+        
+        if (!matchesSize) return false;
+      }
+
+      // 横竖图筛选
+      if (orientation === 'horizontal') {
+        if (img.width <= img.height) return false;
+      } else if (orientation === 'vertical') {
+        if (img.height <= img.width) return false;
+      }
+
+      return true;
+    });
+  }, [images, filters]);
   const containerRef = useRef(null);
   const listRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);

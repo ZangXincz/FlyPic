@@ -1,5 +1,5 @@
 appname=flypic
-version=0.1.0
+version=1.0.0
 desc=飞图 - 专为飞牛 fnOS 设计的轻量、快速、稳定的图像素材检索浏览应用，支持数十万级别图片流畅浏览，非侵入式设计，100% 开源免费
 arch=x86_64
 display_name=FlyPic

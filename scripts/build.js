@@ -101,34 +101,38 @@ console.log('   ⏳ 首次构建需要编译原生模块，约需 1-3 分钟...\
 
 const dockerPath = toDockerPath(packServerDir);
 
-// 使用 node:22-slim (Debian) 确保 glibc 兼容性
-const dockerCmd = [
-  'docker run --rm',
-  `-v "${dockerPath}:/app"`,
-  '-w /app',
-  'node:22-slim',
-  'sh -c "' + [
-    // 安装编译工具
-    'apt-get update',
-    'apt-get install -y python3 make g++ --no-install-recommends',
-    // 配置 npm 镜像
-    'npm config set registry https://registry.npmmirror.com',
-    // 清理旧依赖并安装
-    'rm -rf node_modules package-lock.json',
-    'npm install --production',
-    // 显示结果
-    'echo ""',
-    'echo "=== 依赖安装完成 ==="',
-    'du -sh node_modules/'
-  ].join(' && ') + '"'
-].join(' ');
+// 创建临时安装脚本
+const installScript = `#!/bin/sh
+set -e
+apt-get update
+apt-get install -y python3 make g++ --no-install-recommends
+npm config set registry https://registry.npmmirror.com
+rm -rf node_modules package-lock.json
+npm install --production
+echo
+echo "=== 依赖安装完成 ==="
+du -sh node_modules/
+`;
+
+const installScriptPath = path.join(packServerDir, 'install.sh');
+fs.writeFileSync(installScriptPath, installScript.replace(/\r\n/g, '\n'), 'utf8');
+
+const dockerCmd = `docker run --rm -v "${dockerPath}:/app" -w /app node:22-slim sh /app/install.sh`;
 
 try {
   run(dockerCmd, { cwd: root });
+  // 删除临时安装脚本
+  if (fs.existsSync(installScriptPath)) {
+    fs.unlinkSync(installScriptPath);
+  }
   console.log('\n   ✅ Linux 依赖安装成功');
   console.log('   ✅ 包含 sharp-linux-x64 (glibc 版本)');
   console.log('   ✅ 包含 better-sqlite3 (Linux 编译版本)\n');
 } catch (error) {
+  // 删除临时安装脚本
+  if (fs.existsSync(installScriptPath)) {
+    fs.unlinkSync(installScriptPath);
+  }
   console.error('\n   ❌ Docker 构建失败');
   console.error('   错误:', error.message);
   console.log('\n   请检查:');
