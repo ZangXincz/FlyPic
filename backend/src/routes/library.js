@@ -42,6 +42,30 @@ router.post('/',
 );
 
 /**
+ * 更新偏好设置（必须在 /:id 之前，否则会被 /:id 匹配）
+ * PUT /api/library/preferences
+ * Body: { preferences }
+ */
+router.put('/preferences', asyncHandler(async (req, res) => {
+  const result = libraryService.updatePreferences(req.body);
+  res.json({ success: true, data: result });
+}));
+
+/**
+ * 更新主题（必须在 /:id 之前）
+ * PUT /api/library/theme
+ * Body: { theme }
+ */
+router.put('/theme', 
+  validateRequired(['theme']),
+  asyncHandler(async (req, res) => {
+    const { theme } = req.body;
+    const result = libraryService.updateTheme(theme);
+    res.json({ success: true, data: result });
+  })
+);
+
+/**
  * 更新素材库
  * PUT /api/library/:id
  * Body: { name?, path? }
@@ -71,30 +95,6 @@ router.post('/:id/set-current', asyncHandler(async (req, res) => {
   const result = await libraryService.setCurrentLibrary(id);
   res.json({ success: true, data: result });
 }));
-
-/**
- * 更新偏好设置
- * PUT /api/library/preferences
- * Body: { preferences }
- */
-router.put('/preferences', asyncHandler(async (req, res) => {
-  const result = libraryService.updatePreferences(req.body);
-  res.json({ success: true, data: result });
-}));
-
-/**
- * 更新主题
- * PUT /api/library/theme
- * Body: { theme }
- */
-router.put('/theme', 
-  validateRequired(['theme']),
-  asyncHandler(async (req, res) => {
-    const { theme } = req.body;
-    const result = libraryService.updateTheme(theme);
-    res.json({ success: true, data: result });
-  })
-);
 
 /**
  * 获取素材库统计

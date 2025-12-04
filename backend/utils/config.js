@@ -13,21 +13,16 @@ const CONFIG_CACHE_TTL = 5000; // 5秒缓存
 function getConfigDir() {
   // Check if running on fnOS
   if (process.env.TRIM_PKGVAR) {
-    console.log('📁 配置目录 (fnOS): ' + process.env.TRIM_PKGVAR);
     return process.env.TRIM_PKGVAR;
   }
   
   // Windows
   if (process.platform === 'win32') {
-    const dir = path.join(process.env.APPDATA || os.homedir(), 'FlyPic');
-    console.log('📁 配置目录 (Windows): ' + dir);
-    return dir;
+    return path.join(process.env.APPDATA || os.homedir(), 'FlyPic');
   }
   
   // Linux/Mac
-  const dir = path.join(os.homedir(), '.flypic');
-  console.log('📁 配置目录 (Linux/Mac): ' + dir);
-  return dir;
+  return path.join(os.homedir(), '.flypic');
 }
 
 /**

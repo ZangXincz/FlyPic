@@ -21,6 +21,8 @@ function App() {
   const [isDraggingLeft, setIsDraggingLeft] = useState(false);
   const [isDraggingRight, setIsDraggingRight] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(true); // 启动加载状态
+  const [connectionError, setConnectionError] = useState(null);
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -174,8 +176,12 @@ function App() {
     }
   };
 
-  const loadLibraries = async () => {
+  const loadLibraries = async (retryCount = 0) => {
+    const maxRetries = 5;
+    const retryDelay = 1000; // 1秒
+
     try {
+      setConnectionError(null);
       const response = await libraryAPI.getAll();
       const data = response.data || response;
 
@@ -208,8 +214,21 @@ function App() {
         }).catch(() => { });
       }
       
+      // 连接成功
+      setIsConnecting(false);
+      
     } catch (error) {
-      console.error('❌ 加载素材库失败:', error.message);
+      console.error(`❌ 加载素材库失败 (${retryCount + 1}/${maxRetries}):`, error.message);
+      
+      if (retryCount < maxRetries - 1) {
+        // 重试
+        setConnectionError(`连接服务器中... (${retryCount + 1}/${maxRetries})`);
+        setTimeout(() => loadLibraries(retryCount + 1), retryDelay);
+      } else {
+        // 重试次数用完
+        setIsConnecting(false);
+        setConnectionError('无法连接到服务器，请检查后端是否启动');
+      }
     }
   };
 
@@ -339,6 +358,44 @@ function App() {
       if (rightPanel) rightPanel.style.transition = '';
     };
   }, [isDraggingLeft, isDraggingRight]);
+
+  // 启动加载界面（移动端和桌面端共用）
+  if (isConnecting) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <div className="text-lg font-medium text-gray-700 dark:text-gray-300">
+            {connectionError || '正在连接服务器...'}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 连接失败界面
+  if (connectionError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
+        <div className="flex flex-col items-center gap-4 text-center px-4">
+          <div className="text-red-500 text-5xl">⚠️</div>
+          <div className="text-lg font-medium text-gray-700 dark:text-gray-300">
+            {connectionError}
+          </div>
+          <button
+            onClick={() => {
+              setIsConnecting(true);
+              setConnectionError(null);
+              loadLibraries(0);
+            }}
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+          >
+            重新连接
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // 移动端布局
   if (isMobile) {
