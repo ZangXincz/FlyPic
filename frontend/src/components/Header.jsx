@@ -532,7 +532,7 @@ function Header() {
         <div className="px-6 pb-3">
           <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-medium text-gray-700 dark:text-gray-300">筛选条件（实时生效）</div>
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300">筛选条件</div>
               <button
                 onClick={clearFilters}
                 className="text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-400"

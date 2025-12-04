@@ -5,13 +5,23 @@ const crypto = require('crypto');
 
 // 配置 Sharp 内存限制（防止内存泄漏）
 sharp.cache({
-  memory: 50, // 最大缓存 50MB（默认 50MB）
-  files: 0,   // 禁用文件缓存
-  items: 20   // 最多缓存 20 个操作
+  memory: 20,  // 最大缓存 20MB（更激进）
+  files: 0,    // 禁用文件缓存
+  items: 10    // 最多缓存 10 个操作
 });
 
 // 设置并发限制
 sharp.concurrency(1); // 一次只处理 1 张图片
+
+// 清理 Sharp 缓存的函数（扫描完成后调用）
+function clearSharpCache() {
+  sharp.cache(false);  // 完全禁用缓存
+  sharp.cache({        // 重新启用最小缓存
+    memory: 20,
+    files: 0,
+    items: 10
+  });
+}
 
 // 支持的文件格式（确定可以生成缩略图的）
 const IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'avif', 'heif', 'heic', 'svg'];
@@ -89,17 +99,20 @@ function isImageFile(filename) {
 
 /**
  * Calculate file hash for change detection
+ * 优化：使用文件大小+修改时间作为快速哈希，避免读取整个文件
  */
 function calculateFileHash(filePath) {
-  let fileBuffer = fs.readFileSync(filePath);
-  const hashSum = crypto.createHash('md5');
-  hashSum.update(fileBuffer);
-  const hash = hashSum.digest('hex');
-  
-  // 显式释放 Buffer
-  fileBuffer = null;
-  
-  return hash;
+  try {
+    const stats = fs.statSync(filePath);
+    // 使用文件大小 + 修改时间作为快速哈希（足够检测变化）
+    const quickHash = `${stats.size}-${stats.mtimeMs}`;
+    const hashSum = crypto.createHash('md5');
+    hashSum.update(quickHash);
+    return hashSum.digest('hex');
+  } catch (error) {
+    // 回退到空哈希
+    return crypto.createHash('md5').update(filePath).digest('hex');
+  }
 }
 
 /**
@@ -366,37 +379,54 @@ async function generateImageThumbnails(imagePath, libraryPath) {
 
 /**
  * 从 PSD 文件提取嵌入的缩略图
+ * 优化：使用部分读取，避免加载整个 PSD 文件到内存
  */
 async function extractPSDThumbnail(psdPath, outputPath) {
+  let fd = null;
   try {
-    const buffer = fs.readFileSync(psdPath);
+    fd = fs.openSync(psdPath, 'r');
+    
+    // 读取头部（前 100 字节足够获取基本信息）
+    const headerBuffer = Buffer.alloc(100);
+    fs.readSync(fd, headerBuffer, 0, 100, 0);
 
-    // PSD 文件格式：
-    // 前 4 字节: "8BPS" (签名)
-    // 偏移 26: Image Resources Section
-    // 查找 Resource ID 1036 (缩略图资源)
-
-    if (buffer.toString('utf8', 0, 4) !== '8BPS') {
+    // PSD 文件格式：前 4 字节: "8BPS" (签名)
+    if (headerBuffer.toString('utf8', 0, 4) !== '8BPS') {
       throw new Error('Not a valid PSD file');
     }
 
-    // 读取 Image Resources Section 长度
-    const colorModeLength = buffer.readUInt32BE(26);
+    // 读取 Color Mode Data 长度（偏移 26）
+    const colorModeLength = headerBuffer.readUInt32BE(26);
     const imageResourcesOffset = 26 + 4 + colorModeLength;
-    const imageResourcesLength = buffer.readUInt32BE(imageResourcesOffset);
 
-    let offset = imageResourcesOffset + 4;
-    const endOffset = offset + imageResourcesLength;
+    // 读取 Image Resources Section 长度
+    const irLengthBuffer = Buffer.alloc(4);
+    fs.readSync(fd, irLengthBuffer, 0, 4, imageResourcesOffset);
+    const imageResourcesLength = irLengthBuffer.readUInt32BE(0);
+
+    // 限制读取大小（最多 2MB，缩略图通常在前面）
+    const maxReadSize = Math.min(imageResourcesLength, 2 * 1024 * 1024);
+    const resourcesBuffer = Buffer.alloc(maxReadSize);
+    fs.readSync(fd, resourcesBuffer, 0, maxReadSize, imageResourcesOffset + 4);
+    
+    fs.closeSync(fd);
+    fd = null;
+
+    let offset = 0;
+    const endOffset = maxReadSize;
 
     // 查找缩略图资源 (ID 1033 或 1036)
-    while (offset < endOffset) {
-      const signature = buffer.toString('utf8', offset, offset + 4);
+    while (offset < endOffset - 12) {
+      const signature = resourcesBuffer.toString('utf8', offset, offset + 4);
       if (signature !== '8BIM') break;
 
-      const resourceId = buffer.readUInt16BE(offset + 4);
-      const nameLength = buffer.readUInt8(offset + 6);
+      const resourceId = resourcesBuffer.readUInt16BE(offset + 4);
+      const nameLength = resourcesBuffer.readUInt8(offset + 6);
       const namePadding = nameLength % 2 === 0 ? nameLength + 2 : nameLength + 1;
-      const dataSize = buffer.readUInt32BE(offset + 6 + namePadding);
+      
+      if (offset + 6 + namePadding + 4 > endOffset) break;
+      
+      const dataSize = resourcesBuffer.readUInt32BE(offset + 6 + namePadding);
       const dataPadding = dataSize % 2 === 0 ? dataSize : dataSize + 1;
 
       // 1033 = 缩略图 (旧格式), 1036 = 缩略图 (新格式)
@@ -405,7 +435,13 @@ async function extractPSDThumbnail(psdPath, outputPath) {
 
         // 跳过前 28 字节的头部信息
         const jpegOffset = dataOffset + 28;
-        const jpegData = buffer.slice(jpegOffset, jpegOffset + dataSize - 28);
+        const jpegSize = dataSize - 28;
+        
+        if (jpegOffset + jpegSize > endOffset) {
+          throw new Error('Thumbnail data exceeds buffer');
+        }
+        
+        const jpegData = resourcesBuffer.slice(jpegOffset, jpegOffset + jpegSize);
 
         // 先获取原始缩略图尺寸
         const metadata = await sharp(jpegData).metadata();
@@ -415,43 +451,16 @@ async function extractPSDThumbnail(psdPath, outputPath) {
         const targetHeight = 480;
         const targetWidth = Math.round(targetHeight * aspectRatio);
 
-        // 根据原始尺寸调整处理策略
-        let resizeOptions, sharpenOptions, webpQuality;
-
-        if (metadata.width >= 1000 || metadata.height >= 1000) {
-          // 高分辨率缩略图（≥1000px）：正常缩放
-          resizeOptions = {
-            fit: 'inside',
-            kernel: 'lanczos3',
-            withoutEnlargement: true
-          };
-          sharpenOptions = { sigma: 0.8, m1: 0.5, m2: 1.0 };
-          webpQuality = 95;
-        } else if (metadata.width >= 500 || metadata.height >= 500) {
-          // 中等分辨率（500-1000px）：轻微放大 + 强锐化
-          resizeOptions = {
-            fit: 'inside',
-            kernel: 'lanczos3',
-            withoutEnlargement: false  // 允许放大
-          };
-          sharpenOptions = { sigma: 1.2, m1: 1.0, m2: 2.0 };  // 强锐化
-          webpQuality = 96;
-        } else {
-          // 低分辨率（<500px）：放大 + 超强锐化
-          resizeOptions = {
-            fit: 'inside',
-            kernel: 'lanczos3',
-            withoutEnlargement: false
-          };
-          sharpenOptions = { sigma: 1.5, m1: 1.2, m2: 2.5 };  // 超强锐化
-          webpQuality = 98;  // 最高质量
-        }
-
+        // 简化处理策略
         await sharp(jpegData)
-          .resize(targetWidth, targetHeight, resizeOptions)
-          .sharpen(sharpenOptions)
+          .resize(targetWidth, targetHeight, {
+            fit: 'inside',
+            kernel: 'lanczos3',
+            withoutEnlargement: metadata.width >= 500
+          })
+          .sharpen({ sigma: 1.0, m1: 0.8, m2: 1.5 })
           .webp({
-            quality: webpQuality,
+            quality: 95,
             effort: 4,
             smartSubsample: false
           })
@@ -471,6 +480,9 @@ async function extractPSDThumbnail(psdPath, outputPath) {
 
     throw new Error('No thumbnail found in PSD');
   } catch (error) {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch (e) {}
+    }
     console.warn(`Failed to extract PSD thumbnail: ${error.message}`);
     return null;
   }
@@ -631,6 +643,7 @@ module.exports = {
   generateThumbnail,
   getImageMetadata,
   generateImageThumbnails,
+  clearSharpCache,
   SUPPORTED_FORMATS,
   ALL_FORMATS
 };
