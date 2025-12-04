@@ -133,7 +133,7 @@ function MainContent() {
     }
   }, [currentLibraryId, searchKeywords, selectedFolder, setImages, setOriginalImages, cancelCurrentRequest]);
 
-  // 监听文件夹/搜索/筛选变化
+  // 监听文件夹/搜索变化
   useEffect(() => {
     if (!currentLibraryId) return;
 
@@ -145,21 +145,18 @@ function MainContent() {
     // 立即取消之前的请求（关键！）
     cancelCurrentRequest();
 
-    // 清空当前图片并设置加载中状态（防止闪烁"暂无图片"）
-    setImages([]);
+    // 🎯 优化：不立即清空图片，保持当前显示直到新数据加载完成
+    // 只设置加载状态，让用户知道正在切换
     useImageStore.getState().setImageLoadingState({
-      isLoading: true,  // 关键：立即设为加载中
-      loadedCount: 0,
-      totalCount: 0,
+      isLoading: true,
+      loadedCount: imageLoadingState.loadedCount,
+      totalCount: imageLoadingState.totalCount,
       hasMore: false
     });
-    
-    // 清理图片缓存
-    imageCache.clear();
 
     // 使用防抖避免快速连续点击
     debounceTimerRef.current = setTimeout(() => {
-      loadImages(true); // 初始加载
+      loadImages(true); // 初始加载（会在完成时替换图片）
     }, 50);
 
     return () => {
@@ -167,7 +164,7 @@ function MainContent() {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [currentLibraryId, searchKeywords, selectedFolder, loadImages, cancelCurrentRequest, setImages]);
+  }, [currentLibraryId, searchKeywords, selectedFolder, loadImages, cancelCurrentRequest]);
 
   // 组件卸载时清理
   useEffect(() => {
