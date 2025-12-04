@@ -11,6 +11,7 @@ export const useImageStore = create((set, get) => ({
   selectedImage: null,
   selectedImages: [],
   totalImageCount: 0,
+  totalSize: 0,  // 素材库总大小（字节）
   
   // 文件夹
   folders: [],
@@ -88,6 +89,7 @@ export const useImageStore = create((set, get) => ({
   
   // 统计
   setTotalImageCount: (count) => set({ totalImageCount: count }),
+  setTotalSize: (size) => set({ totalSize: size }),
   
   // 加载状态
   setImageLoadingState: (state) => set((prev) => ({

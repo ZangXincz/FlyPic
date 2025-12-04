@@ -1,36 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
-import { useUIStore } from '../stores/useUIStore';
-import { useScanStore } from '../stores/useScanStore';
 import { Folder, Image as ImageIcon, HardDrive } from 'lucide-react';
-import { imageAPI } from '../api';
 
 function Dashboard() {
     const { currentLibraryId, getCurrentLibrary } = useLibraryStore();
-  const { totalImageCount, folders } = useImageStore();
+    const { totalImageCount, totalSize, folders } = useImageStore();
 
     const currentLibrary = getCurrentLibrary();
-    const [librarySize, setLibrarySize] = useState(0);
 
     // Calculate stats
     const folderCount = folders.length;
 
     // Group folders by parent to find top-level folders
     const topLevelFolders = folders.filter(f => !f.parentPath || f.parentPath === '.' || f.parentPath === '');
-
-    // Fetch library size
-    useEffect(() => {
-        if (currentLibraryId) {
-            imageAPI.getStats(currentLibraryId)
-                .then(res => {
-                    setLibrarySize(res.totalSize || 0);
-                })
-                .catch(err => {
-                    console.error('Failed to fetch library stats:', err);
-                });
-        }
-    }, [currentLibraryId, totalImageCount]); // Re-fetch when library or image count changes
 
     // Format bytes to human readable format
     const formatBytes = (bytes) => {
@@ -90,7 +73,7 @@ function Dashboard() {
                             </div>
                             <div>
                                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                                    {formatBytes(librarySize)}
+                                    {formatBytes(totalSize)}
                                 </div>
                                 <div className="text-sm text-gray-500 dark:text-gray-400">素材库大小</div>
                             </div>

@@ -116,19 +116,20 @@ function App() {
           params.folder = imageState.selectedFolder;
         }
 
-        // 并行加载文件夹和图片
+        // 并行加载文件夹、图片和统计信息
         Promise.all([
           imageAPI.getFolders(libraryId),
           // 如果没有选中文件夹且没有搜索条件，不加载图片（保持在 Dashboard）
           (imageState.selectedFolder || imageState.searchKeywords || imageState.filters.formats.length > 0)
             ? imageAPI.search(libraryId, params)
             : Promise.resolve({ images: [] }),
-          // 扫描完成后总是重新获取总数
-          imageAPI.getCount(libraryId)
-        ]).then(([foldersRes, imagesRes, countRes]) => {
+          // 扫描完成后重新获取统计信息（包含 totalSize）
+          imageAPI.getStats(libraryId)
+        ]).then(([foldersRes, imagesRes, statsRes]) => {
           useImageStore.getState().setFolders(foldersRes.folders);
           useImageStore.getState().setImages(imagesRes.images);
-          useImageStore.getState().setTotalImageCount(countRes.count);
+          useImageStore.getState().setTotalImageCount(statsRes.total || 0);
+          useImageStore.getState().setTotalSize(statsRes.totalSize || 0);
         }).catch(err => {
           console.error('❌ 加载数据失败:', err.message);
         }).finally(() => {
@@ -155,6 +156,24 @@ function App() {
     };
   }, []);
 
+  // 加载文件夹和统计信息（需要在 loadLibraries 之前定义）
+  const loadFolders = async (libraryId) => {
+    try {
+      // 并行获取文件夹和统计信息
+      const [foldersResponse, statsResponse] = await Promise.all([
+        imageAPI.getFolders(libraryId),
+        imageAPI.getStats(libraryId)
+      ]);
+      
+      useImageStore.getState().setFolders(foldersResponse.folders);
+      // 注意：后端返回的字段是 total 和 totalSize
+      useImageStore.getState().setTotalImageCount(statsResponse.total || 0);
+      useImageStore.getState().setTotalSize(statsResponse.totalSize || 0);
+    } catch (error) {
+      console.error('❌ 加载文件夹失败:', error.message);
+    }
+  };
+
   const loadLibraries = async () => {
     try {
       const response = await libraryAPI.getAll();
@@ -177,21 +196,8 @@ function App() {
       }
 
       if (libId) {
-        // 并行加载图片和文件夹（加快初始加载速度）
-        // 优化：启动时不加载全部图片，只加载文件夹
-        const [foldersRes] = await Promise.all([
-          imageAPI.getFolders(libId)
-        ]);
-
-        useImageStore.getState().setFolders(foldersRes.folders);
-
-        // 获取总数
-        try {
-          const countRes = await imageAPI.getCount(libId);
-          useImageStore.getState().setTotalImageCount(countRes.count);
-        } catch (e) {
-          console.error('❌ 获取图片总数失败:', e.message);
-        }
+        // 加载文件夹和统计信息（包含 totalSize）
+        await loadFolders(libId);
 
         // 后台检查当前素材库的扫描状态
         scanAPI.getStatus(libId).then(scanStatus => {
@@ -221,15 +227,6 @@ function App() {
       useImageStore.getState().setImages(response.images);
     } catch (error) {
       console.error('❌ 加载图片失败:', error.message);
-    }
-  };
-
-  const loadFolders = async (libraryId) => {
-    try {
-      const response = await imageAPI.getFolders(libraryId);
-      useImageStore.getState().setFolders(response.folders);
-    } catch (error) {
-      console.error('❌ 加载文件夹失败:', error.message);
     }
   };
 
