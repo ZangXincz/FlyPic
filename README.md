@@ -119,12 +119,4 @@ FlyPic/
 
 MIT License - 详见 [LICENSE](./LICENSE) 文件
 
-## 📚 更多文档
-
-- [重构完成报告](./重构完成报告.md) - 代码架构说明
-- [更新日志](./CHANGELOG.md) - 版本更新记录
-- [飞牛打包部署指南](./飞牛打包部署指南.md) - 部署文档
-
----
-
 **官网**：[FlyPic 介绍页](https://flypic.shikejk.com/) | **最后更新**：2024-12-03
