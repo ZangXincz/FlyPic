@@ -7,9 +7,11 @@ import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
-import { imageAPI } from '../api';
+import { imageAPI, fileAPI } from '../api';
 import requestManager, { RequestType } from '../services/requestManager';
 import FileViewer from './FileViewer';
+import ContextMenu, { menuItems } from './ContextMenu';
+import UndoToast from './UndoToast';
 
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 100;
@@ -55,8 +57,8 @@ function ImageWaterfall() {
   const { currentLibraryId } = useLibraryStore();
   const { 
     images, selectedImage, setSelectedImage, selectedImages, setSelectedImages, 
-    toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, 
-    searchKeywords, filters, appendImages, setImageLoadingState
+    toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, setSelectedFolder,
+    searchKeywords, filters, appendImages, setImageLoadingState, setImages, setFolders
   } = useImageStore();
   
   const { thumbnailHeight, isResizingPanels } = useUIStore();
@@ -112,6 +114,43 @@ function ImageWaterfall() {
   const [photoIndex, setPhotoIndex] = useState(-1);
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
   const [viewerFile, setViewerFile] = useState(null);
+  const [contextMenu, setContextMenu] = useState({ isOpen: false, position: null, image: null });
+  const [undoToast, setUndoToast] = useState({ isVisible: false, message: '', count: 0 });
+  const [undoHistory, setUndoHistory] = useState([]); // 撤销历史栈，支持多次撤销
+
+  // 监听文件夹切换，切换时关闭Toast
+  useEffect(() => {
+    // 文件夹切换时立即关闭Toast，避免重新计时
+    setUndoToast({ isVisible: false, message: '', count: 0 });
+  }, [selectedFolder]);
+
+  // 全局快捷键监听 - Del 键删除, Ctrl+Z 撤销
+  useEffect(() => {
+    const handleGlobalKeyDown = async (e) => {
+      // 忽略输入框中的快捷键
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      // Ctrl+Z → 撤销
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        if (undoHistory.length > 0) {
+          await handleUndo();
+        }
+        return;
+      }
+      
+      // Del 键 → 直接移入回收站
+      if (e.key === 'Delete') {
+        if (selectedImages.length > 0 || selectedImage) {
+          e.preventDefault();
+          await handleQuickDelete();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [selectedImages, selectedImage, images, currentLibraryId, undoHistory]);
 
   // 简单的向下无限滚动加载
   const loadMoreImages = useCallback(async () => {
@@ -412,6 +451,194 @@ function ImageWaterfall() {
     }
   }, [flatImages, lastSelectedIndex, toggleImageSelection, setSelectedImages, clearSelection, setSelectedImage]);
 
+  // 处理右键菜单
+  const handleContextMenu = useCallback((e, image) => {
+    e.preventDefault();
+    setContextMenu({
+      isOpen: true,
+      position: { x: e.clientX, y: e.clientY },
+      image
+    });
+  }, []);
+
+  // 撤销删除 - 乐观更新，立即响应
+  const handleUndo = async () => {
+    if (undoHistory.length === 0) return;
+    
+    // 从历史栈中取出最近的删除记录
+    const lastDeleted = undoHistory[undoHistory.length - 1];
+    const remainingHistory = undoHistory.slice(0, -1);
+    
+    // 1. 立即关闭Toast
+    setUndoToast({ isVisible: false, message: '', count: 0 });
+    
+    // 2. 立即更新历史栈
+    setUndoHistory(remainingHistory);
+    
+    // 3. 获取被恢复文件的文件夹路径
+    const restoredFolder = lastDeleted.images[0]?.folder || null;
+    
+    // 4. 立即更新文件夹计数（乐观更新）
+    const { folders, setFolders } = useImageStore.getState();
+    if (folders && folders.length > 0) {
+      const updatedFolders = folders.map(folder => {
+        // 计算该文件夹下恢复的图片数量
+        const restoredInFolder = lastDeleted.images.filter(img => 
+          img.folder === folder.path || img.folder?.startsWith(folder.path + '/')
+        ).length;
+        
+        if (restoredInFolder > 0) {
+          return {
+            ...folder,
+            count: (folder.count || 0) + restoredInFolder
+          };
+        }
+        return folder;
+      });
+      setFolders(updatedFolders);
+    }
+    
+    // 5. 立即恢复图片到UI（乐观更新）
+    if (restoredFolder && restoredFolder !== selectedFolder) {
+      // 跨文件夹：先跳转，让文件夹加载自然显示图片
+      setSelectedFolder(restoredFolder);
+      console.log(`📂 跳转到文件夹: ${restoredFolder}`);
+    } else {
+      // 同文件夹：立即添加到列表
+      const restoredImages = [...images, ...lastDeleted.images];
+      setImages(restoredImages);
+    }
+    
+    // 6. 后台执行API调用（不阻塞UI）
+    Promise.all([
+      fileAPI.restore(currentLibraryId, lastDeleted.items),
+      imageAPI.getFolders(currentLibraryId)
+    ]).then(([restoreResult, foldersRes]) => {
+      // 检查恢复结果
+      if (restoreResult.data.failed.length > 0) {
+        console.warn(`⚠️ 恢复失败: ${restoreResult.data.failed.length} 个文件`);
+        const errorMsg = restoreResult.data.failed[0].error || '未知错误';
+        
+        // 失败时回滚UI
+        setUndoHistory(undoHistory);
+        if (restoredFolder === selectedFolder) {
+          setImages(images);
+        }
+        setFolders(foldersRes.folders);
+        alert(`恢复失败: ${errorMsg}\n\n提示：超过5分钟的文件已移入系统回收站，请手动从回收站恢复。`);
+      } else {
+        // 成功时刷新文件夹列表以确保同步
+        setFolders(foldersRes.folders);
+      }
+    }).catch(error => {
+      console.error('恢复失败:', error);
+      // 失败时回滚
+      setUndoHistory(undoHistory);
+      if (restoredFolder === selectedFolder) {
+        setImages(images);
+      }
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        setFolders(foldersRes.folders);
+      });
+      alert('恢复失败: ' + (error.message || '未知错误'));
+    });
+  };
+
+  // 快速删除（乐观更新，立即响应）
+  const handleQuickDelete = async () => {
+    const items = selectedImages.length > 0
+      ? selectedImages.map(img => ({ type: 'file', path: img.path }))
+      : selectedImage
+      ? [{ type: 'file', path: selectedImage.path }]
+      : [];
+    
+    if (items.length === 0) return;
+    
+    // 保存被删除的图片信息（乐观更新）
+    const deletingPaths = new Set(items.map(item => item.path));
+    const deletedImagesList = images.filter(img => deletingPaths.has(img.path));
+    
+    // 1. 立即更新UI（乐观更新）- 最快的响应
+    const remainingImages = images.filter(img => !deletingPaths.has(img.path));
+    setImages(remainingImages);
+    clearSelection();
+    
+    // 2. 立即更新文件夹计数（乐观更新）
+    const { folders, setFolders } = useImageStore.getState();
+    if (folders && folders.length > 0) {
+      const updatedFolders = folders.map(folder => {
+        // 计算该文件夹下被删除的图片数量
+        const deletedInFolder = deletedImagesList.filter(img => 
+          img.folder === folder.path || img.folder?.startsWith(folder.path + '/')
+        ).length;
+        
+        if (deletedInFolder > 0) {
+          return {
+            ...folder,
+            count: Math.max(0, (folder.count || 0) - deletedInFolder)
+          };
+        }
+        return folder;
+      });
+      setFolders(updatedFolders);
+    }
+    
+    // 3. 推入历史栈
+    const newHistory = [...undoHistory, { 
+      images: deletedImagesList, 
+      paths: Array.from(deletingPaths),
+      items: items
+    }];
+    setUndoHistory(newHistory);
+    
+    // 5. 显示Toast（立即显示）
+    setUndoToast({
+      isVisible: true,
+      message: `已将 ${items.length} 个文件移入临时文件夹（Ctrl+Z撤销 · ${newHistory.length}次）`,
+      count: items.length
+    });
+    
+    // 6. 后台执行API调用（不阻塞UI）
+    Promise.all([
+      fileAPI.delete(currentLibraryId, items),
+      imageAPI.getFolders(currentLibraryId)
+    ]).then(([deleteResult, foldersRes]) => {
+      // 检查是否有失败的项
+      if (deleteResult.data.failed.length > 0) {
+        console.warn(`⚠️ 删除失败: ${deleteResult.data.failed.length} 个文件`, deleteResult.data.failed);
+        // 如果有失败，回滚UI
+        setImages(images);
+        setUndoHistory(undoHistory);
+        setUndoToast({ isVisible: false, message: '', count: 0 });
+        setFolders(foldersRes.folders);
+        alert('删除失败: 部分文件无法删除');
+      } else {
+        // 成功时刷新文件夹列表（但已经被乐观更新了，这里主要是确保同步）
+        setFolders(foldersRes.folders);
+      }
+    }).catch(error => {
+      console.error('删除失败:', error);
+      // 失败时回滚UI
+      setImages(images);
+      setUndoHistory(undoHistory);
+      setUndoToast({ isVisible: false, message: '', count: 0 });
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        setFolders(foldersRes.folders);
+      });
+      alert('删除失败: ' + (error.message || '未知错误'));
+    });
+  };
+
+  // 准备右键菜单选项
+  const getContextMenuOptions = useCallback((image) => {
+    return [
+      menuItems.delete(async () => {
+        setContextMenu({ isOpen: false, position: null, image: null });
+        await handleQuickDelete();
+      })
+    ];
+  }, [selectedImages, selectedImage]);
+
   // 渲染单个图片单元格
   const renderImageCell = (image, flatIndex) => {
     const isSingleSelected = selectedImage?.id === image.id;
@@ -441,6 +668,15 @@ function ImageWaterfall() {
             } else {
               setViewerFile(image);
             }
+          }}
+          onContextMenu={(e) => handleContextMenu(e, image)}
+          draggable={true}
+          onDragStart={(e) => {
+            const items = selectedImages.length > 0 && selectedImages.some(img => img.id === image.id)
+              ? selectedImages
+              : [image];
+            e.dataTransfer.setData('flypic/images', JSON.stringify(items));
+            e.dataTransfer.effectAllowed = 'move';
           }}
         >
           <img
@@ -607,6 +843,25 @@ function ImageWaterfall() {
           onClose={() => setViewerFile(null)}
         />
       )}
+
+      {/* 右键菜单 */}
+      <ContextMenu
+        isOpen={contextMenu.isOpen}
+        position={contextMenu.position}
+        onClose={() => setContextMenu({ isOpen: false, position: null, image: null })}
+        options={contextMenu.image ? getContextMenuOptions(contextMenu.image) : []}
+      />
+
+      {/* 撤销删除提示 */}
+      <UndoToast
+        isVisible={undoToast.isVisible}
+        message={undoToast.message}
+        onUndo={handleUndo}
+        onClose={() => {
+          setUndoToast({ isVisible: false, message: '', count: 0 });
+          // 不清空历史栈，允许Toast消失后仍可Ctrl+Z
+        }}
+      />
     </div>
   );
 }

@@ -16,7 +16,8 @@
     "glob": "^10.3.10",
     "p-limit": "^7.2.0",
     "sharp": "^0.33.0",
-    "socket.io": "^4.6.0"
+    "socket.io": "^4.6.0",
+    "trash": "^8.1.1"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

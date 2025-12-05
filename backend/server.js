@@ -118,6 +118,23 @@ server.listen(PORT, () => {
   try {
     const currentConfig = config.loadConfig();
     
+    // 启动定时清理任务（每分钟检查一次过期临时文件）
+    const fileService = app.get('fileService');
+    setInterval(async () => {
+      if (currentConfig.libraries && currentConfig.libraries.length > 0) {
+        for (const library of currentConfig.libraries) {
+          try {
+            const result = await fileService.cleanExpiredTempFiles(library.id);
+            if (result.cleaned > 0) {
+              console.log(`🧹 清理了 ${result.cleaned} 个过期临时文件`);
+            }
+          } catch (error) {
+            // 忽略错误
+          }
+        }
+      }
+    }, 60 * 1000); // 每分钟执行一次
+    
     // 恢复所有素材库的扫描状态
     if (currentConfig.libraries && currentConfig.libraries.length > 0) {
       scanManager.restoreAllStates(currentConfig.libraries);

@@ -166,6 +166,17 @@ function MainContent() {
     };
   }, [currentLibraryId, searchKeywords, selectedFolder, loadImages, cancelCurrentRequest]);
 
+  // 恢复撤销前的文件夹状态
+  useEffect(() => {
+    const restoreFolder = localStorage.getItem('flypic_restore_folder');
+    if (restoreFolder) {
+      const { setSelectedFolder } = useImageStore.getState();
+      setSelectedFolder(restoreFolder);
+      localStorage.removeItem('flypic_restore_folder');
+      console.log('✅ 已恢复到文件夹:', restoreFolder);
+    }
+  }, []);
+
   // 组件卸载时清理
   useEffect(() => {
     return () => {

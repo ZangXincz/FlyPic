@@ -1,12 +1,14 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Folder, Search, ChevronRight, ChevronDown, X, Trash2, ChevronsRight, ChevronsDown } from 'lucide-react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useScanStore } from '../stores/useScanStore';
-import { libraryAPI, scanAPI, imageAPI } from '../api';
+import { libraryAPI, scanAPI, imageAPI, fileAPI } from '../api';
 import requestManager from '../services/requestManager';
 import { onUserActionStart } from '../services/imageLoadService';
 import LibraryMissingModal from './LibraryMissingModal';
+import ContextMenu, { menuItems } from './ContextMenu';
+import UndoToast from './UndoToast';
 
 // 检查素材库扫描状态
 const checkScanStatus = async (libraryId) => {
@@ -43,6 +45,9 @@ function Sidebar() {
   const [isSwitching, setIsSwitching] = useState(false);
   const [missingLibrary, setMissingLibrary] = useState(null); // 切换时发现的丢失素材库
   const [isLibrarySelectorOpen, setIsLibrarySelectorOpen] = useState(false); // 素材库选择器展开状态
+  const [contextMenu, setContextMenu] = useState({ isOpen: false, position: null, folder: null });
+  const [undoToast, setUndoToast] = useState({ isVisible: false, message: '', count: 0 });
+  const [undoHistory, setUndoHistory] = useState([]); // 撤销历史栈，支持多次撤销
   const folderSearchDebounceRef = useRef(null);
   const librarySelectorRef = useRef(null);
 
@@ -67,6 +72,12 @@ function Sidebar() {
       }
     };
   }, []);
+
+  // 监听文件夹切换，切换时关闭Toast
+  useEffect(() => {
+    // 文件夹切换时立即关闭Toast，避免重新计时
+    setUndoToast({ isVisible: false, message: '', count: 0 });
+  }, [selectedFolder]);
 
   // 响应全局状态：显示新建素材库表单
   useEffect(() => {
@@ -97,6 +108,228 @@ function Sidebar() {
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [isLibrarySelectorOpen]);
+
+  // 从树形结构中移除指定节点
+  const removeNodeFromTree = useCallback((tree, targetPath) => {
+    if (!tree || tree.length === 0) return tree;
+    
+    return tree
+      .filter(node => node.path !== targetPath)
+      .map(node => ({
+        ...node,
+        children: node.children ? removeNodeFromTree(node.children, targetPath) : []
+      }));
+  }, []);
+
+  // 智能选择删除文件夹后的下一个文件夹
+  const findNextFolderAfterDelete = useCallback((deletedPath, allFolders) => {
+    if (!allFolders || allFolders.length === 0) return null;
+
+    // 将树形结构拍平成一维列表，便于按 path / 父路径 处理
+    const flat = [];
+    const walk = (nodes) => {
+      if (!nodes) return;
+      for (const node of nodes) {
+        flat.push(node);
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(allFolders);
+
+    // 计算被删除文件夹的父级路径
+    const parentPath = deletedPath.includes('/')
+      ? deletedPath.substring(0, deletedPath.lastIndexOf('/'))
+      : null;
+
+    // 找出所有同级兄弟（包括被删除的那个）
+    const siblings = flat.filter((f) => {
+      const fParent = f.path.includes('/')
+        ? f.path.substring(0, f.path.lastIndexOf('/'))
+        : null;
+      return fParent === parentPath;
+    });
+
+    if (siblings.length === 0) {
+      // 没有任何同级，直接回退到父级或"全部"
+      return parentPath || null;
+    }
+
+    const deletedIndex = siblings.findIndex((f) => f.path === deletedPath);
+
+    if (deletedIndex === -1) {
+      // 在当前树结构中已找不到该节点，保守地回退到父级/全部
+      return parentPath || null;
+    }
+
+    // 优先级1：同级下方
+    if (deletedIndex < siblings.length - 1) {
+      return siblings[deletedIndex + 1].path;
+    }
+
+    // 优先级2：同级上方
+    if (deletedIndex > 0) {
+      return siblings[deletedIndex - 1].path;
+    }
+
+    // 优先级3：父级
+    return parentPath || null;
+  }, []);
+
+  // 监听Del键删除选中的文件夹
+  useEffect(() => {
+    const handleKeyDown = async (e) => {
+      // 忽略输入框中的快捷键
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      // Del 键 → 删除当前选中的文件夹（只在没有选中图片时）
+      if (e.key === 'Delete' && selectedFolder) {
+        const { selectedImages, selectedImage } = useImageStore.getState();
+        // 如果有选中的图片，让 ImageWaterfall 处理删除
+        if (selectedImages.length > 0 || selectedImage) return;
+        
+        e.preventDefault();
+        await handleDeleteFolder(selectedFolder);
+      }
+      
+      // Ctrl+Z → 撤销（文件夹或图片）
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        // 如果有文件夹撤销历史，撤销文件夹
+        if (undoHistory.length > 0) {
+          e.preventDefault();
+          await handleUndoFolderDelete();
+        }
+        // 否则让 ImageWaterfall 处理图片撤销
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFolder, undoHistory, findNextFolderAfterDelete]);
+
+  // 文件夹删除功能（乐观更新，立即响应）
+  const handleDeleteFolder = async (folderPath) => {
+    if (!currentLibraryId) return;
+    
+    const items = [{ type: 'folder', path: folderPath }];
+    
+    // 1. 推入历史栈
+    const newHistory = [...undoHistory, { 
+      items: items,
+      folderPath: folderPath 
+    }];
+    setUndoHistory(newHistory);
+    
+    // 2. 如果删除的是当前选中的文件夹，智能选择下一个文件夹
+    if (selectedFolder === folderPath) {
+      // 先从当前 folders 树中移除即将被删除的节点，再计算下一个目标
+      const foldersAfterDelete = removeNodeFromTree(folders, folderPath);
+      const nextFolder = findNextFolderAfterDelete(folderPath, foldersAfterDelete);
+      setSelectedFolder(nextFolder);
+    }
+    
+    // 3. 立即显示Toast
+    setUndoToast({
+      isVisible: true,
+      message: `已将文件夹移入临时文件夹（Ctrl+Z撤销 · ${newHistory.length}次）`,
+      count: 1
+    });
+    
+    // 4. 后台执行API调用（不阻塞UI）
+    Promise.all([
+      fileAPI.delete(currentLibraryId, items),
+      imageAPI.getFolders(currentLibraryId)
+    ]).then(([deleteResult, foldersRes]) => {
+      const { setFolders } = useImageStore.getState();
+      if (deleteResult.data.failed.length > 0) {
+        console.warn(`⚠️ 删除失败:`, deleteResult.data.failed);
+        // 失败时回滚
+        setUndoHistory(undoHistory);
+        setUndoToast({ isVisible: false, message: '', count: 0 });
+        setFolders(foldersRes.folders);
+        alert('删除失败: ' + deleteResult.data.failed[0].error);
+      } else {
+        // 成功时刷新文件夹列表以确保同步
+        setFolders(foldersRes.folders);
+      }
+    }).catch(error => {
+      console.error('删除文件夹失败:', error);
+      // 失败时回滚
+      setUndoHistory(undoHistory);
+      setUndoToast({ isVisible: false, message: '', count: 0 });
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        const { setFolders } = useImageStore.getState();
+        setFolders(foldersRes.folders);
+      });
+      alert('删除失败: ' + (error.message || '未知错误'));
+    });
+  };
+
+  // 撤销文件夹删除（乐观更新，立即响应）
+  const handleUndoFolderDelete = async () => {
+    if (undoHistory.length === 0) return;
+    
+    // 从历史栈中取出最近的删除记录
+    const lastDeleted = undoHistory[undoHistory.length - 1];
+    const remainingHistory = undoHistory.slice(0, -1);
+    
+    // 1. 立即关闭Toast
+    setUndoToast({ isVisible: false, message: '', count: 0 });
+    
+    // 2. 立即更新历史栈
+    setUndoHistory(remainingHistory);
+    
+    // 3. 立即更新文件夹列表（乐观更新）- 让恢复的文件夹立即出现
+    const { folders, setFolders } = useImageStore.getState();
+    if (folders && folders.length > 0) {
+      // 检查文件夹是否已在列表中
+      const folderExists = folders.some(f => f.path === lastDeleted.folderPath);
+      if (!folderExists) {
+        // 如果文件夹不在列表中，立即添加（占位符，后端会返回正确的计数）
+        const newFolder = {
+          path: lastDeleted.folderPath,
+          count: 0, // 占位符，后端刷新时会更新
+          name: lastDeleted.folderPath.split('/').pop() || lastDeleted.folderPath
+        };
+        setFolders([...folders, newFolder]);
+      }
+    }
+    
+    // 4. 立即跳转到恢复的文件夹
+    setSelectedFolder(lastDeleted.folderPath);
+    console.log(`📂 跳转到文件夹: ${lastDeleted.folderPath}`);
+    
+    // 5. 后台执行API调用（不阻塞UI）
+    Promise.all([
+      fileAPI.restore(currentLibraryId, lastDeleted.items),
+      imageAPI.getFolders(currentLibraryId)
+    ]).then(([restoreResult, foldersRes]) => {
+      const { setFolders } = useImageStore.getState();
+      // 检查恢复结果
+      if (restoreResult.data.failed.length > 0) {
+        console.warn(`⚠️ 恢复失败: ${restoreResult.data.failed.length} 个文件`);
+        const errorMsg = restoreResult.data.failed[0].error || '未知错误';
+        
+        // 失败时回滚
+        setUndoHistory(undoHistory);
+        setFolders(foldersRes.folders);
+        alert(`恢复失败: ${errorMsg}\n\n提示：超过5分钟的文件已移入系统回收站，请手动从回收站恢复。`);
+      } else {
+        // 成功时刷新文件夹列表以确保同步
+        setFolders(foldersRes.folders);
+      }
+    }).catch(error => {
+      console.error('撤销失败:', error);
+      // 失败时回滚
+      setUndoHistory(undoHistory);
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        const { setFolders } = useImageStore.getState();
+        setFolders(foldersRes.folders);
+      });
+      alert('撤销失败: ' + (error.message || '未知错误'));
+    });
+  };
 
   const handleAddLibrary = async () => {
     // 扫描期间禁止添加素材库
@@ -485,6 +718,14 @@ function Sidebar() {
               }`}
             style={{ paddingLeft: `${level * 16 + 12}px` }}
             onClick={() => handleFolderClick(folder)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu({
+                isOpen: true,
+                position: { x: e.clientX, y: e.clientY },
+                folder: folder
+              });
+            }}
           >
             {/* 展开/折叠图标 - 独立点击区域 */}
             {hasChildren ? (
@@ -798,6 +1039,30 @@ function Sidebar() {
           ) : null}
         </div>
       </div>
+
+      {/* 文件夹右键菜单 */}
+      <ContextMenu
+        isOpen={contextMenu.isOpen}
+        position={contextMenu.position}
+        onClose={() => setContextMenu({ isOpen: false, position: null, folder: null })}
+        options={contextMenu.folder ? [
+          menuItems.delete(async () => {
+            setContextMenu({ isOpen: false, position: null, folder: null });
+            await handleDeleteFolder(contextMenu.folder.path);
+          })
+        ] : []}
+      />
+
+      {/* 撤销删除提示 */}
+      <UndoToast
+        isVisible={undoToast.isVisible}
+        message={undoToast.message}
+        onUndo={handleUndoFolderDelete}
+        onClose={() => {
+          setUndoToast({ isVisible: false, message: '', count: 0 });
+          // 不清空历史栈，允许Toast消失后仍可Ctrl+Z
+        }}
+      />
     </div>
   );
 }

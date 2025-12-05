@@ -5,10 +5,12 @@
 import * as library from './endpoints/library';
 import * as image from './endpoints/image';
 import * as scan from './endpoints/scan';
+import { fileAPI } from './file';
 
 export const libraryAPI = library;
 export const imageAPI = image;
 export const scanAPI = scan;
+export { fileAPI };
 
 export { api, APIError } from './client';
 

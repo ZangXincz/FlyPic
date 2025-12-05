@@ -12,6 +12,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const LibraryService = require('./services/LibraryService');
 const ImageService = require('./services/ImageService');
 const ScanService = require('./services/ScanService');
+const FileService = require('./services/FileService');
 
 /**
  * 创建 Express 应用
@@ -54,19 +55,24 @@ function createApp(dependencies) {
     io
   );
 
+  const fileService = new FileService(dbPool, configManager);
+
   // 将服务注入到 app 中，供路由使用
   app.set('libraryService', libraryService);
   app.set('imageService', imageService);
   app.set('scanService', scanService);
+  app.set('fileService', fileService);
 
   // API 路由
   const libraryRouter = require('./routes/library');
   const imageRouter = require('./routes/image');
   const scanRouter = require('./routes/scan');
+  const fileRouter = require('./routes/file');
 
   app.use('/api/library', libraryRouter);
   app.use('/api/image', imageRouter);
   app.use('/api/scan', scanRouter);
+  app.use('/api/file', fileRouter);
 
   // 健康检查
   app.get('/api/health', (req, res) => {

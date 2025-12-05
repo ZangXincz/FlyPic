@@ -67,6 +67,27 @@ class LibraryDatabase {
       // 列已存在，忽略错误
     }
 
+    // 添加 rating 列（如果不存在）
+    try {
+      this.db.exec(`ALTER TABLE images ADD COLUMN rating INTEGER DEFAULT 0`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+
+    // 添加 favorite 列（如果不存在）
+    try {
+      this.db.exec(`ALTER TABLE images ADD COLUMN favorite INTEGER DEFAULT 0`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+
+    // 添加 tags 列（如果不存在）
+    try {
+      this.db.exec(`ALTER TABLE images ADD COLUMN tags TEXT DEFAULT ''`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+
     // Folders table
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS folders (
@@ -89,6 +110,9 @@ class LibraryDatabase {
       CREATE INDEX IF NOT EXISTS idx_folder_parent ON folders(parent_path);
       -- 复合索引：优化文件夹+时间排序查询
       CREATE INDEX IF NOT EXISTS idx_folder_created ON images(folder, created_at DESC);
+      -- 评分和收藏索引：优化筛选查询
+      CREATE INDEX IF NOT EXISTS idx_rating ON images(rating DESC);
+      CREATE INDEX IF NOT EXISTS idx_favorite ON images(favorite DESC);
     `);
 
     // Metadata table for tracking database modifications
@@ -169,6 +193,12 @@ class LibraryDatabase {
   getImageByPath(imagePath) {
     const stmt = this.db.prepare('SELECT * FROM images WHERE path = ?');
     return stmt.get(imagePath);
+  }
+
+  getImagesByFolderPrefix(folderPath) {
+    // 获取文件夹内所有图片记录（包括子文件夹）
+    const stmt = this.db.prepare('SELECT * FROM images WHERE folder = ? OR folder LIKE ?');
+    return stmt.all(folderPath, `${folderPath}/%`);
   }
 
   getAllImages() {

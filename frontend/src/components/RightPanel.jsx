@@ -4,12 +4,12 @@ import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
-import { imageAPI } from '../api';
+import { imageAPI, fileAPI } from '../api';
 import JSZip from 'jszip';
 
 function RightPanel() {
   const { currentLibraryId } = useLibraryStore();
-  const { selectedImage, selectedImages, selectedFolder, images } = useImageStore();
+  const { selectedImage, selectedImages, selectedFolder, images, setSelectedImage } = useImageStore();
   const { setMobileView, isResizingPanels, resizingSide } = useUIStore();
   const [isMobile, setIsMobile] = useState(false);
   const [imageUrl, setImageUrl] = useState(''); // 当前显示的图片URL
@@ -932,35 +932,34 @@ function RightPanel() {
               })()
             ) : (
               // 单选模式
-              <>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">文件名:</span>
-                  <p className="text-gray-900 dark:text-gray-100 break-all">{selectedImage.filename}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">尺寸:</span>
-                  <p className="text-gray-900 dark:text-gray-100">
-                    {selectedImage.width} × {selectedImage.height}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">大小:</span>
-                  <p className="text-gray-900 dark:text-gray-100">{formatFileSize(selectedImage.size)}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">格式:</span>
-                  <p className="text-gray-900 dark:text-gray-100 uppercase">{selectedImage.format}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">创建时间:</span>
-                  <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.createdAt || selectedImage.created_at)}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">修改时间:</span>
-                  <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.modifiedAt || selectedImage.modified_at)}</p>
-                </div>
-              </>
-            )}
+                <>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">文件名:</span>
+                    <p className="text-gray-900 dark:text-gray-100 break-all">{selectedImage.filename}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">尺寸:</span>
+                    <p className="text-gray-900 dark:text-gray-100">{selectedImage.width} × {selectedImage.height}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">文件大小:</span>
+                    <p className="text-gray-900 dark:text-gray-100">{formatFileSize(selectedImage.size)}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">格式:</span>
+                    <p className="text-gray-900 dark:text-gray-100 uppercase">{selectedImage.format}</p>
+                  </div>
+                  
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">创建时间:</span>
+                    <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.createdAt || selectedImage.created_at)}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">修改时间:</span>
+                    <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.modifiedAt || selectedImage.modified_at)}</p>
+                  </div>
+                </>
+              )}
             <div>
               <span className="text-gray-500 dark:text-gray-400">路径:</span>
               <div className="flex items-start gap-2 mt-1">

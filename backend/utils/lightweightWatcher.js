@@ -180,13 +180,14 @@ class LightweightWatcher {
 
     try {
       // 获取数据库中这些文件夹的文件列表
+      // 🔥 关键修复：只查询文件夹直接包含的文件，不包含子文件夹
+      // 因为 _scanFolder 不递归扫描，如果这里包含子文件夹，会误删子文件夹的记录
       const dbFiles = new Set();
       for (const folder of changedFolders) {
         const relativePath = path.relative(libraryPath, folder).replace(/\\/g, '/');
-        // 使用正确的 SQL 模式匹配
-        const pattern = relativePath ? `${relativePath}/%` : '%';
-        const stmt = db.db.prepare('SELECT path FROM images WHERE folder = ? OR folder LIKE ?');
-        const rows = stmt.all(relativePath, pattern);
+        // 只查询 folder = ? 的记录，不包含子文件夹（去掉 OR folder LIKE ?/%）
+        const stmt = db.db.prepare('SELECT path FROM images WHERE folder = ?');
+        const rows = stmt.all(relativePath);
         rows.forEach(row => dbFiles.add(row.path));
       }
 
