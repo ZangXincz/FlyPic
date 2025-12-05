@@ -101,12 +101,32 @@ console.log('   ⏳ 首次构建需要编译原生模块，约需 1-3 分钟...\
 
 const dockerPath = toDockerPath(packServerDir);
 
-// 创建临时安装脚本
+// 创建临时安装脚本（使用国内镜像源）
 const installScript = `#!/bin/sh
 set -e
+
+# 使用阿里云镜像源加速（避免连接超时）
+# 兼容新旧版本的 Debian 配置
+if [ -f /etc/apt/sources.list ]; then
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+fi
+
+if [ -d /etc/apt/sources.list.d ]; then
+    find /etc/apt/sources.list.d -name "*.sources" -exec sed -i 's/deb.debian.org/mirrors.aliyun.com/g; s/security.debian.org/mirrors.aliyun.com/g' {} \\;
+fi
+
 apt-get update
 apt-get install -y python3 make g++ --no-install-recommends
+
+# 配置 npm 使用国内镜像
 npm config set registry https://registry.npmmirror.com
+
+# 使用环境变量配置二进制文件镜像源（避免网络超时）
+export NODEJS_ORG_MIRROR=https://registry.npmmirror.com/-/binary/node/
+export SHARP_DIST_BASE_URL=https://registry.npmmirror.com/-/binary/sharp/
+export BETTER_SQLITE3_BINARY_HOST=https://registry.npmmirror.com/-/binary/better-sqlite3/
+
 rm -rf node_modules package-lock.json
 npm install --production
 echo

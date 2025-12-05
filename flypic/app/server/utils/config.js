@@ -149,13 +149,19 @@ function addLibrary(name, libraryPath) {
 
 /**
  * Remove library from config
+ * @param {string} libraryId - 要删除的素材库ID
+ * @param {boolean} autoSelectNext - 是否自动选择下一个素材库，默认 true
  */
-function removeLibrary(libraryId) {
+function removeLibrary(libraryId, autoSelectNext = true) {
   const config = loadConfig();
   config.libraries = config.libraries.filter(lib => lib.id !== libraryId);
   
   if (config.currentLibraryId === libraryId) {
-    config.currentLibraryId = config.libraries.length > 0 ? config.libraries[0].id : null;
+    if (autoSelectNext) {
+      config.currentLibraryId = config.libraries.length > 0 ? config.libraries[0].id : null;
+    } else {
+      config.currentLibraryId = null;
+    }
   }
   
   saveConfig(config);
