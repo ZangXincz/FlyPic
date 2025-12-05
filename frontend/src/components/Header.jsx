@@ -4,12 +4,14 @@ import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
+import { useTheme } from '../hooks/useTheme';
 import { libraryAPI, scanAPI, watchAPI } from '../api';
 
 function Header() {
   const { currentLibraryId } = useLibraryStore();
   const { searchKeywords, originalImages, selectedFolder, setSearchKeywords, filters, setFilters, resetFilters } = useImageStore();
-  const { theme, toggleTheme, thumbnailHeight, setThumbnailHeight, mobileView } = useUIStore();
+  const { thumbnailHeight, setThumbnailHeight, mobileView } = useUIStore();
+  const { theme, toggleTheme } = useTheme();
   
   const [showFilters, setShowFilters] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -226,15 +228,6 @@ function Header() {
     setFilters({ formats: [], sizes: [], orientation: '' });
   };
 
-  const handleThemeToggle = async () => {
-    toggleTheme();
-    try {
-      await libraryAPI.updateTheme(theme === 'light' ? 'dark' : 'light');
-    } catch (error) {
-      console.error('Error saving theme:', error);
-    }
-  };
-
   const handleThumbnailHeightChange = async (height) => {
     setThumbnailHeight(height);
     try {
@@ -298,7 +291,7 @@ function Header() {
             </button>
             
             <button
-              onClick={handleThemeToggle}
+              onClick={toggleTheme}
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             >
               {theme === 'light' ? (
@@ -514,7 +507,7 @@ function Header() {
           </button>
           
           <button
-            onClick={handleThemeToggle}
+            onClick={toggleTheme}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             title={theme === 'light' ? '切换到暗色模式' : '切换到亮色模式'}
           >

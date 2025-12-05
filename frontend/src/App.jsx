@@ -4,6 +4,7 @@ import { useUIStore } from './stores/useUIStore';
 import { useLibraryStore } from './stores/useLibraryStore';
 import { useImageStore } from './stores/useImageStore';
 import { useScanStore } from './stores/useScanStore';
+import { useTheme } from './hooks/useTheme';
 import { libraryAPI, imageAPI, scanAPI } from './api';
 import domCleanup from './utils/domCleanup';
 import Sidebar from './components/Sidebar';
@@ -13,7 +14,10 @@ import Header from './components/Header';
 import LibraryMissingModal from './components/LibraryMissingModal';
 
 function App() {
-  const { theme, mobileView, setMobileView } = useUIStore();
+  // 使用统一的主题管理 Hook
+  useTheme();
+  
+  const { mobileView, setMobileView } = useUIStore();
   const { 
     setLibraries, 
     setCurrentLibrary, 
@@ -32,15 +36,6 @@ function App() {
   const [connectionError, setConnectionError] = useState(null);
   const [missingLibrary, setMissingLibrary] = useState(null); // 丢失的素材库信息
   const containerRef = useRef(null);
-
-  useEffect(() => {
-    // Apply theme
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
 
   // 检测屏幕尺寸
   useEffect(() => {
@@ -581,7 +576,7 @@ function App() {
       />
       <div ref={containerRef} className="flex flex-1 overflow-hidden">
         {/* 左侧边栏 */}
-        <div id="left-panel" style={{ width: `${leftWidth}px` }} className="flex-shrink-0 h-full">
+        <div id="left-panel" style={{ width: `${leftWidth}px` }} className="flex-shrink-0 h-full bg-white dark:bg-gray-800">
           <Sidebar />
         </div>
 
@@ -623,7 +618,7 @@ function App() {
         </div>
 
         {/* 右侧边栏 */}
-        <div id="right-panel" style={{ width: `${rightWidth}px` }} className="flex-shrink-0 h-full">
+        <div id="right-panel" style={{ width: `${rightWidth}px` }} className="flex-shrink-0 h-full bg-white dark:bg-gray-800">
           <RightPanel />
         </div>
       </div>

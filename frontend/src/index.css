@@ -22,335 +22,58 @@ body {
   overflow: hidden;
 }
 
-/* 暗色主题 - 纯黑灰色调 */
+/* ==================== 主题系统 - CSS 变量方案 ==================== */
+/* 轻量、快速、稳定 - 仅定义核心变量，让 Tailwind 自动处理 */
+
+:root {
+  /* 亮色主题变量 */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --bg-tertiary: #f3f4f6;
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --border-color: #e5e7eb;
+  --hover-bg: #f3f4f6;
+}
+
 .dark {
-  --tw-bg-opacity: 1;
+  /* 暗色主题变量 - 护眼优化版 */
+  /* 基于色彩心理学：避免纯黑，降低对比度，微暖色调 */
+  --bg-primary: #1e1e1e;      /* 主背景（避免纯黑 #171717，减少眼疲劳） */
+  --bg-secondary: #2c2c2c;    /* 侧边栏（从 #252525 调亮，增加层次） */
+  --bg-tertiary: #323232;     /* 三级背景（从 #2a2a2a 调亮） */
+  --text-primary: #d4d4d4;    /* 主文字（从 #e0e0e0 降低，减少对比度） */
+  --text-secondary: #a8a8a8;  /* 次要文字（从 #b0b0b0 微调） */
+  --border-color: #3a3a3a;    /* 边框（从 #333333 调亮，更柔和） */
+  --hover-bg: #323232;        /* 悬停背景 */
 }
 
-/* 背景色 - 纯黑灰 */
-.dark .bg-gray-900 {
-  background-color: #0a0a0a !important;
-}
+/* ==================== 必要的暗色主题覆盖 ==================== */
+/* 只保留真正需要自定义的样式 */
 
-.dark .bg-gray-800 {
-  background-color: #252525 !important;  /* 侧边栏/顶部 - 稍微亮一些 */
-}
-
-.dark .bg-gray-700 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .bg-gray-600 {
-  background-color: #3a3a3a !important;
-}
-
-.dark .bg-gray-500 {
-  background-color: #3a3a3a !important;
-}
-
-.dark .bg-gray-400 {
-  background-color: #4a4a4a !important;
-}
-
-.dark .bg-gray-300 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .bg-gray-200:not(img):not(.image-container) {
-  background-color: #2a2a2a !important;
-}
-
-.dark .bg-gray-100 {
-  background-color: #1a1a1a !important;
-}
-
-.dark .bg-gray-50 {
-  background-color: #1a1a1a !important;
-}
-
-.dark .bg-white {
-  background-color: #1a1a1a !important;
-}
-
-/* 边框色 - 深灰 */
-.dark .border-gray-700 {
-  border-color: #333333 !important;
-}
-
-.dark .border-gray-600 {
-  border-color: #444444 !important;
-}
-
-.dark .border-gray-300 {
-  border-color: #333333 !important;
-}
-
-.dark .border-gray-200 {
-  border-color: #2a2a2a !important;
-}
-
-.dark .border-gray-100 {
-  border-color: #2a2a2a !important;
-}
-
-/* 文字色 - 纯白灰 */
-.dark .text-gray-900 {
-  color: #f5f5f5 !important;
-}
-
-.dark .text-gray-700 {
-  color: #e0e0e0 !important;
-}
-
-.dark .text-gray-600 {
-  color: #b0b0b0 !important;
-}
-
-.dark .text-gray-500 {
-  color: #909090 !important;
-}
-
-.dark .text-gray-400 {
-  color: #707070 !important;
-}
-
-.dark .text-gray-300 {
-  color: #d0d0d0 !important;
-}
-
-.dark .text-white {
-  color: #ffffff !important;
-}
-
-.dark .text-gray-800 {
-  color: #e0e0e0 !important;
-}
-
-.dark .text-gray-200 {
-  color: #d0d0d0 !important;
-}
-
-.dark .text-gray-100 {
-  color: #e0e0e0 !important;
-}
-
-/* 透明度覆盖 */
-.dark .bg-opacity-0 {
-  --tw-bg-opacity: 0 !important;
-}
-
-.dark .bg-opacity-10 {
-  --tw-bg-opacity: 0.1 !important;
-}
-
-.dark .bg-opacity-20 {
-  --tw-bg-opacity: 0.2 !important;
-}
-
-.dark .bg-opacity-30 {
-  --tw-bg-opacity: 0.3 !important;
-}
-
-.dark .bg-opacity-50 {
-  --tw-bg-opacity: 0.5 !important;
-}
-
-/* 悬停效果 - 深灰 */
-.dark .hover\:bg-gray-100:hover {
-  background-color: #2a2a2a !important;
-}
-
-.dark .hover\:bg-gray-700:hover {
-  background-color: #333333 !important;
-}
-
-.dark .hover\:bg-gray-600:hover {
-  background-color: #3a3a3a !important;
-}
-
-.dark .hover\:bg-gray-200:hover {
-  background-color: #2a2a2a !important;
-}
-
-.dark .hover\:bg-gray-50:hover {
-  background-color: #2a2a2a !important;
-}
-
-/* 黑色相关 - 但不影响透明遮罩 */
-.dark .bg-black:not(.bg-opacity-0):not(.bg-opacity-10):not(.bg-opacity-20):not(.bg-opacity-30) {
-  background-color: #0a0a0a !important;
-}
-
-.dark .text-black {
-  color: #ffffff !important;
-}
-
-.dark .border-black {
-  border-color: #2a2a2a !important;
-}
-
-/* 移除所有颜色调，统一为黑灰 */
-
-/* 蓝色系 -> 黑灰 */
-.dark .bg-blue-50 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .bg-blue-100 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .bg-blue-200 {
-  background-color: #3a3a3a !important;
-}
-
-.dark .bg-blue-500 {
-  background-color: #4a4a4a !important;
-}
-
-.dark .bg-blue-600 {
-  background-color: #3a3a3a !important;
-}
-
-.dark .bg-blue-800 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .bg-blue-900 {
-  background-color: #1a1a1a !important;
-}
-
-.dark .text-blue-300 {
-  color: #d0d0d0 !important;
-}
-
-.dark .text-blue-400 {
-  color: #e0e0e0 !important;
-}
-
-.dark .text-blue-500 {
-  color: #f0f0f0 !important;
-}
-
-.dark .text-blue-600 {
-  color: #f0f0f0 !important;
-}
-
-.dark .text-blue-700 {
-  color: #e0e0e0 !important;
-}
-
-.dark .border-blue-200 {
-  border-color: #2a2a2a !important;
-}
-
-.dark .border-blue-500 {
-  border-color: #4a4a4a !important;
-}
-
-.dark .border-blue-700 {
-  border-color: #333333 !important;
-}
-
-.dark .hover\:bg-blue-600:hover {
-  background-color: #4a4a4a !important;
-}
-
-.dark .hover\:bg-blue-50:hover {
-  background-color: #333333 !important;
-}
-
-/* 绿色系 -> 黑灰 */
-.dark .bg-green-50 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .text-green-600 {
-  color: #e0e0e0 !important;
-}
-
-/* 红色系 -> 黑灰 */
-.dark .bg-red-50 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .text-red-600 {
-  color: #f0a0a0 !important;
-}
-
-/* 黄色系 -> 黑灰 */
-.dark .bg-yellow-50 {
-  background-color: #2a2a2a !important;
-}
-
-.dark .text-yellow-600 {
-  color: #e0e0a0 !important;
-}
-
-/* 图片容器不要覆盖 */
+/* 图片背景保持透明 */
 .dark img {
   background-color: transparent !important;
 }
 
-/* 输入框和选择框 */
+/* 输入框样式 - 护眼优化 */
 .dark input,
 .dark select,
 .dark textarea {
-  background-color: #1a1a1a !important;
-  border-color: #333333 !important;
-  color: #e0e0e0 !important;
+  background-color: #1e1e1e;  /* 使用主背景色 */
+  border-color: #3a3a3a;      /* 使用优化后的边框色 */
+  color: #d4d4d4;             /* 使用优化后的主文字色 */
 }
 
 .dark input:focus,
 .dark select:focus,
 .dark textarea:focus {
-  border-color: #4a4a4a !important;
-  outline: none !important;
-  --tw-ring-color: #4a4a4a !important;
+  border-color: #5a5a5a;      /* 焦点时稍微亮一点 */
+  outline: none;
 }
 
 .dark input::placeholder {
-  color: #707070 !important;
-}
-
-/* 按钮 */
-.dark button {
-  color: #e0e0e0 !important;
-}
-
-.dark .bg-blue-500 {
-  background-color: #4a4a4a !important;
-}
-
-.dark .hover\:bg-blue-600:hover {
-  background-color: #5a5a5a !important;
-}
-
-/* 阴影 */
-.dark .shadow-lg {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-.dark .shadow-xl {
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3) !important;
-}
-
-.dark .hover\:shadow-lg:hover {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-/* Ring (focus outline) */
-.dark .ring-blue-500 {
-  --tw-ring-color: #4a4a4a !important;
-}
-
-.dark .focus\:ring-blue-500:focus {
-  --tw-ring-color: #4a4a4a !important;
-}
-
-.dark .focus\:ring-2:focus {
-  --tw-ring-offset-shadow: 0 0 0 0px #000 !important;
-  --tw-ring-shadow: 0 0 0 2px #4a4a4a !important;
+  color: #7a7a7a;             /* 占位符颜色调亮 */
 }
 
 /* Custom scrollbar */
@@ -365,24 +88,26 @@ body {
 
 /* 亮色主题滚动条 */
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.15);  /* 降低不透明度，更柔和 */
   border-radius: 4px;
+  transition: background 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.25);  /* 悬停时稍微明显 */
 }
 
-/* 暗色主题滚动条 */
+/* 暗色主题滚动条 - 护眼优化 */
 .dark ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);  /* 极淡背景 */
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.15);  /* 降低亮度，减少刺激 */
   border-radius: 4px;
+  transition: background 0.2s ease;
 }
 
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.25);  /* 悬停时更明显 */
 }

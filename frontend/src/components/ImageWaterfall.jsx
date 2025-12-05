@@ -425,11 +425,13 @@ function ImageWaterfall() {
         style={{ width: `${image.calculatedWidth}px` }}
       >
         <div
-          className="relative group cursor-pointer overflow-hidden rounded-lg transition-all hover:shadow-lg"
+          className={`relative group cursor-pointer overflow-hidden rounded-lg transition-all hover:shadow-lg ${
+            isSelected 
+              ? 'border-2 border-blue-400 dark:border-blue-500' 
+              : 'border border-gray-200 dark:border-gray-600'
+          }`}
           style={{ 
-            height: `${image.calculatedHeight}px`,
-            backgroundColor: '#2a2a2a',
-            border: isSelected ? '3px solid #3b82f6' : '3px solid transparent'
+            height: `${image.calculatedHeight}px`
           }}
           onClick={(e) => handleImageClick(image, e, flatIndex)}
           onDoubleClick={() => {
