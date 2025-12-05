@@ -31,9 +31,11 @@ function Dashboard() {
                     <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
                         {currentLibrary?.name || '素材库'}
                     </h1>
-                    <p className="text-gray-500 dark:text-gray-400">
-                        {currentLibrary?.path}
-                    </p>
+                    {currentLibrary?.path && (
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                            {currentLibrary.path}
+                        </p>
+                    )}
                 </div>
 
                 {/* Stats Cards */}

@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { NotFoundError, ValidationError } = require('../middleware/errorHandler');
-const { getFlypicPath, getDatabasePath } = require('../config');
+const { getFlypicPath, getDatabasePath, getThumbnailsPath } = require('../config');
 
 class LibraryService {
   constructor(configManager, dbPool, scanManager, lightweightWatcher, io) {
@@ -126,8 +126,10 @@ class LibraryService {
 
   /**
    * 删除素材库
+   * @param {string} id - 素材库ID
+   * @param {boolean} autoSelectNext - 是否自动选择下一个素材库，默认 true
    */
-  async deleteLibrary(id) {
+  async deleteLibrary(id, autoSelectNext = true) {
     const config = this.configManager.load();
     const library = config.libraries.find(lib => lib.id === id);
 
@@ -139,7 +141,7 @@ class LibraryService {
     await this._cleanupLibraryResources(id, library.path);
 
     // 删除配置
-    this.configManager.removeLibrary(id);
+    this.configManager.removeLibrary(id, autoSelectNext);
 
     return { 
       success: true,
@@ -237,6 +239,43 @@ class LibraryService {
 
     // 等待资源释放
     await new Promise(resolve => setTimeout(resolve, 300));
+  }
+
+  /**
+   * 验证素材库路径是否存在
+   * 返回三种状态：
+   * - status: 'ok' - 素材库正常（文件夹和索引都存在）
+   * - status: 'missing_index' - 文件夹存在但索引不存在（需要重新扫描）
+   * - status: 'missing_folder' - 文件夹不存在（需要打开其他或新建）
+   */
+  validateLibraryPath(libraryId) {
+    const config = this.configManager.load();
+    const library = config.libraries.find(lib => lib.id === libraryId);
+
+    if (!library) {
+      throw new NotFoundError('Library', libraryId);
+    }
+
+    const folderExists = fs.existsSync(library.path);
+    const flypicPath = getFlypicPath(library.path);
+    const dbPath = getDatabasePath(library.path);
+    const indexExists = fs.existsSync(flypicPath) && fs.existsSync(dbPath);
+    
+    let status = 'ok';
+    if (!folderExists) {
+      status = 'missing_folder';
+    } else if (!indexExists) {
+      status = 'missing_index';
+    }
+    
+    return {
+      libraryId,
+      path: library.path,
+      name: library.name,
+      folderExists,
+      indexExists,
+      status
+    };
   }
 
   /**

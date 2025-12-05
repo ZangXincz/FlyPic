@@ -79,10 +79,12 @@ router.put('/:id', asyncHandler(async (req, res) => {
 /**
  * 删除素材库
  * DELETE /api/library/:id
+ * Query: autoSelectNext - 是否自动选择下一个素材库，默认 true
  */
 router.delete('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const result = await libraryService.deleteLibrary(id);
+  const autoSelectNext = req.query.autoSelectNext !== 'false';
+  const result = await libraryService.deleteLibrary(id, autoSelectNext);
   res.json({ success: true, data: result });
 }));
 
@@ -103,6 +105,16 @@ router.post('/:id/set-current', asyncHandler(async (req, res) => {
 router.get('/:id/stats', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const result = await libraryService.getLibraryStats(id);
+  res.json({ success: true, data: result });
+}));
+
+/**
+ * 验证素材库路径是否存在
+ * GET /api/library/:id/validate
+ */
+router.get('/:id/validate', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const result = libraryService.validateLibraryPath(id);
   res.json({ success: true, data: result });
 }));
 

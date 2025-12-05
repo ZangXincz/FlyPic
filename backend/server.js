@@ -173,11 +173,24 @@ server.listen(PORT, () => {
       }
     }
     
-    // 为当前素材库启动文件监控
+    // 为当前素材库启动文件监控（仅当索引存在时）
     if (currentConfig.currentLibraryId) {
       const currentLib = currentConfig.libraries.find(lib => lib.id === currentConfig.currentLibraryId);
       if (currentLib) {
-        lightweightWatcher.watch(currentLib.id, currentLib.path, currentLib.name, io);
+        const fs = require('fs');
+        const { getFlypicPath, getDatabasePath } = require('./src/config');
+        const flypicPath = getFlypicPath(currentLib.path);
+        const dbPath = getDatabasePath(currentLib.path);
+        
+        // 只有当文件夹和索引都存在时才启动监控
+        const folderExists = fs.existsSync(currentLib.path);
+        const indexExists = fs.existsSync(flypicPath) && fs.existsSync(dbPath);
+        
+        if (folderExists && indexExists) {
+          lightweightWatcher.watch(currentLib.id, currentLib.path, currentLib.name, io);
+        } else {
+          console.log(`⚠️ 跳过文件监控: ${currentLib.name} (${!folderExists ? '文件夹不存在' : '索引不存在'})`);
+        }
       }
     }
   } catch (e) {

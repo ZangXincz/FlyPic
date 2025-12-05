@@ -10,10 +10,17 @@ import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import RightPanel from './components/RightPanel';
 import Header from './components/Header';
+import LibraryMissingModal from './components/LibraryMissingModal';
 
 function App() {
   const { theme, mobileView, setMobileView } = useUIStore();
-  const { setLibraries, setCurrentLibrary } = useLibraryStore();
+  const { 
+    setLibraries, 
+    setCurrentLibrary, 
+    removeLibrary,
+    setShowAddLibraryForm,
+    triggerExpandLibrarySelector 
+  } = useLibraryStore();
   const { selectedImage } = useImageStore();
   const { setScanProgress } = useScanStore();
   const [leftWidth, setLeftWidth] = useState(256); // 默认 256px (w-64)
@@ -23,6 +30,7 @@ function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [isConnecting, setIsConnecting] = useState(true); // 启动加载状态
   const [connectionError, setConnectionError] = useState(null);
+  const [missingLibrary, setMissingLibrary] = useState(null); // 丢失的素材库信息
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -202,6 +210,28 @@ function App() {
       }
 
       if (libId) {
+        // 验证当前素材库路径是否存在
+        try {
+          const validateRes = await libraryAPI.validate(libId);
+          const validateData = validateRes.data || validateRes;
+          
+          // 检查状态：ok / missing_index / missing_folder
+          if (validateData.status !== 'ok') {
+            // 路径或索引不存在，显示弹窗
+            setMissingLibrary({
+              id: libId,
+              name: validateData.name,
+              path: validateData.path,
+              status: validateData.status // 'missing_index' 或 'missing_folder'
+            });
+            setIsConnecting(false);
+            return; // 不继续加载
+          }
+        } catch (validateError) {
+          console.warn('验证素材库路径失败:', validateError.message);
+          // 验证失败时继续正常加载
+        }
+
         // 加载文件夹和统计信息（包含 totalSize）
         await loadFolders(libId);
 
@@ -397,11 +427,85 @@ function App() {
     );
   }
 
+  // 素材库路径丢失弹窗处理函数
+  const handleRescanLibrary = async () => {
+    if (!missingLibrary) return;
+    
+    // 关闭弹窗
+    setMissingLibrary(null);
+    
+    // 触发全量扫描
+    try {
+      await scanAPI.fullScan(missingLibrary.id);
+      // 扫描会通过 Socket.IO 推送进度
+    } catch (error) {
+      console.error('启动扫描失败:', error.message);
+      alert('启动扫描失败: ' + error.message);
+    }
+  };
+
+  const handleOpenOtherLibrary = async () => {
+    if (!missingLibrary) return;
+    
+    // 从配置中移除当前素材库（不自动选择下一个）
+    try {
+      await libraryAPI.remove(missingLibrary.id, false);
+      removeLibrary(missingLibrary.id);
+      
+      // 清空当前素材库，让用户自己选择
+      setCurrentLibrary(null);
+      useImageStore.getState().setImages([]);
+      useImageStore.getState().setFolders([]);
+      useImageStore.getState().setTotalImageCount(0);
+      useImageStore.getState().setSelectedFolder(null);
+    } catch (error) {
+      console.error('移除素材库失败:', error.message);
+    }
+    
+    // 关闭弹窗
+    setMissingLibrary(null);
+    
+    // 触发展开素材库选择器
+    setTimeout(() => {
+      triggerExpandLibrarySelector();
+    }, 100);
+  };
+
+  const handleCreateNewLibrary = async () => {
+    if (!missingLibrary) return;
+    
+    // 从配置中移除当前素材库
+    try {
+      await libraryAPI.remove(missingLibrary.id);
+      removeLibrary(missingLibrary.id);
+    } catch (error) {
+      console.error('移除素材库失败:', error.message);
+    }
+    
+    // 关闭弹窗
+    setMissingLibrary(null);
+    
+    // 触发显示新建素材库表单
+    setTimeout(() => {
+      setShowAddLibraryForm(true);
+    }, 100);
+  };
+
   // 移动端布局
   if (isMobile) {
     return (
       <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900">
         <Header />
+        {/* 素材库路径丢失弹窗 */}
+        <LibraryMissingModal
+          isOpen={!!missingLibrary}
+          libraryName={missingLibrary?.name}
+          libraryPath={missingLibrary?.path}
+          status={missingLibrary?.status}
+          onRescan={handleRescanLibrary}
+          onOpenOther={handleOpenOtherLibrary}
+          onCreateNew={handleCreateNewLibrary}
+        />
         <div className="flex-1 overflow-hidden relative">
           {/* 侧边栏视图 */}
           <div className={`absolute inset-0 transition-transform duration-300 ${mobileView === 'sidebar' ? 'translate-x-0' : '-translate-x-full'
@@ -465,6 +569,16 @@ function App() {
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900">
       <Header />
+      {/* 素材库路径丢失弹窗 */}
+      <LibraryMissingModal
+        isOpen={!!missingLibrary}
+        libraryName={missingLibrary?.name}
+        libraryPath={missingLibrary?.path}
+        status={missingLibrary?.status}
+        onRescan={handleRescanLibrary}
+        onOpenOther={handleOpenOtherLibrary}
+        onCreateNew={handleCreateNewLibrary}
+      />
       <div ref={containerRef} className="flex flex-1 overflow-hidden">
         {/* 左侧边栏 */}
         <div id="left-panel" style={{ width: `${leftWidth}px` }} className="flex-shrink-0 h-full">

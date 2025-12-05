@@ -6,6 +6,7 @@ import { useScanStore } from '../stores/useScanStore';
 import { libraryAPI, scanAPI, imageAPI } from '../api';
 import requestManager from '../services/requestManager';
 import { onUserActionStart } from '../services/imageLoadService';
+import LibraryMissingModal from './LibraryMissingModal';
 
 // 检查素材库扫描状态
 const checkScanStatus = async (libraryId) => {
@@ -18,7 +19,17 @@ const checkScanStatus = async (libraryId) => {
 };
 
 function Sidebar() {
-  const { libraries, currentLibraryId, setCurrentLibrary, addLibrary, removeLibrary } = useLibraryStore();
+  const { 
+    libraries, 
+    currentLibraryId, 
+    setCurrentLibrary, 
+    addLibrary, 
+    removeLibrary,
+    showAddLibraryForm,
+    setShowAddLibraryForm,
+    expandLibrarySelector,
+    resetExpandLibrarySelector
+  } = useLibraryStore();
   const { folders, selectedFolder, totalImageCount, setSelectedFolder } = useImageStore();
   const { isScanning } = useScanStore();
 
@@ -30,7 +41,10 @@ function Sidebar() {
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [isAdding, setIsAdding] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
+  const [missingLibrary, setMissingLibrary] = useState(null); // 切换时发现的丢失素材库
+  const [isLibrarySelectorOpen, setIsLibrarySelectorOpen] = useState(false); // 素材库选择器展开状态
   const folderSearchDebounceRef = useRef(null);
+  const librarySelectorRef = useRef(null);
 
   // 文件夹搜索防抖（300ms）
   const handleFolderSearchChange = (value) => {
@@ -53,6 +67,36 @@ function Sidebar() {
       }
     };
   }, []);
+
+  // 响应全局状态：显示新建素材库表单
+  useEffect(() => {
+    if (showAddLibraryForm) {
+      setShowAddLibrary(true);
+      setShowAddLibraryForm(false); // 重置全局状态
+    }
+  }, [showAddLibraryForm, setShowAddLibraryForm]);
+
+  // 响应全局状态：展开素材库选择器
+  useEffect(() => {
+    if (expandLibrarySelector) {
+      setIsLibrarySelectorOpen(true);
+      resetExpandLibrarySelector(); // 重置全局状态
+    }
+  }, [expandLibrarySelector, resetExpandLibrarySelector]);
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (librarySelectorRef.current && !librarySelectorRef.current.contains(event.target)) {
+        setIsLibrarySelectorOpen(false);
+      }
+    };
+
+    if (isLibrarySelectorOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isLibrarySelectorOpen]);
 
   const handleAddLibrary = async () => {
     // 扫描期间禁止添加素材库
@@ -183,6 +227,22 @@ function Sidebar() {
 
     setIsSwitching(true);
     try {
+      // 0. 先验证目标素材库路径是否存在
+      const validateRes = await libraryAPI.validate(libraryId);
+      const validateData = validateRes.data || validateRes;
+      
+      if (validateData.status !== 'ok') {
+        // 路径或索引不存在，显示弹窗
+        setMissingLibrary({
+          id: libraryId,
+          name: validateData.name,
+          path: validateData.path,
+          status: validateData.status
+        });
+        setIsSwitching(false);
+        return;
+      }
+
       // 1. 暂停空闲加载并取消所有之前的请求
       onUserActionStart();
       requestManager.cancelAllRequests();
@@ -459,8 +519,88 @@ function Sidebar() {
     });
   };
 
+  // 弹窗处理函数
+  const handleMissingRescan = async () => {
+    if (!missingLibrary) return;
+    const libId = missingLibrary.id;
+    setMissingLibrary(null);
+    
+    try {
+      // 1. 清理当前状态
+      useScanStore.getState().setScanProgress(null);
+      useImageStore.getState().setSelectedImage(null);
+      useImageStore.getState().setImages([]);
+      useImageStore.getState().setFolders([]);
+      useImageStore.getState().setTotalImageCount(0);
+      setSelectedFolder(null);
+      
+      // 2. 先切换到该素材库（后端）
+      await libraryAPI.setCurrent(libId);
+      
+      // 3. 更新前端状态（这会触发 UI 更新，select 会显示正确的值）
+      setCurrentLibrary(libId);
+      
+      // 4. 启动扫描（扫描进度会通过 Socket.IO 推送）
+      await scanAPI.fullScan(libId);
+    } catch (error) {
+      console.error('启动扫描失败:', error.message);
+      alert('启动扫描失败: ' + error.message);
+    }
+  };
+
+  const handleMissingOpenOther = async () => {
+    if (!missingLibrary) return;
+    
+    try {
+      // 删除时不自动选择下一个素材库
+      await libraryAPI.remove(missingLibrary.id, false);
+      removeLibrary(missingLibrary.id);
+      
+      // 清空当前素材库，让用户自己选择
+      setCurrentLibrary(null);
+      useImageStore.getState().setImages([]);
+      useImageStore.getState().setFolders([]);
+      useImageStore.getState().setTotalImageCount(0);
+      setSelectedFolder(null);
+    } catch (error) {
+      console.error('移除素材库失败:', error.message);
+    }
+    
+    setMissingLibrary(null);
+    
+    // 展开素材库选择器让用户选择
+    setTimeout(() => {
+      setIsLibrarySelectorOpen(true);
+    }, 100);
+  };
+
+  const handleMissingCreateNew = async () => {
+    if (!missingLibrary) return;
+    
+    try {
+      await libraryAPI.remove(missingLibrary.id);
+      removeLibrary(missingLibrary.id);
+    } catch (error) {
+      console.error('移除素材库失败:', error.message);
+    }
+    
+    setMissingLibrary(null);
+    setShowAddLibrary(true);
+  };
+
   return (
     <div className="w-full h-full border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col">
+      {/* 素材库路径丢失弹窗 */}
+      <LibraryMissingModal
+        isOpen={!!missingLibrary}
+        libraryName={missingLibrary?.name}
+        libraryPath={missingLibrary?.path}
+        status={missingLibrary?.status}
+        onRescan={handleMissingRescan}
+        onOpenOther={handleMissingOpenOther}
+        onCreateNew={handleMissingCreateNew}
+      />
+      
       {/* Library Management */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between mb-3">
@@ -469,38 +609,65 @@ function Sidebar() {
 
         {/* Library Selector with Delete Button */}
         <div className="flex gap-2">
-          <div className="relative flex-1">
-            <select
-              value={currentLibraryId || ''}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value === '__add__') {
-                  if (isScanning()) {
-                    alert('扫描进行中，请稍后再试或暂停扫描');
-                    return;
-                  }
-                  setShowAddLibrary(true);
-                } else if (value) {
-                  handleLibraryClick(value);
+          <div className="relative flex-1" ref={librarySelectorRef}>
+            {/* 自定义下拉选择器 */}
+            <div
+              onClick={() => {
+                if (!isSwitching && !isScanning()) {
+                  setIsLibrarySelectorOpen(!isLibrarySelectorOpen);
                 }
               }}
-              disabled={isSwitching || isScanning()}
-              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ paddingRight: '2rem' }}
+              className={`w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 cursor-pointer flex items-center justify-between ${
+                (isSwitching || isScanning()) ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
-              {libraries.length === 0 && (
-                <option value="">暂无素材库</option>
-              )}
-              {libraries.map((library) => (
-                <option key={library.id} value={library.id}>
-                  {library.name}
-                </option>
-              ))}
-              <option value="__add__" style={{ borderTop: '1px solid #ccc' }}>
-                + 添加新素材库
-              </option>
-            </select>
-            <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+              <span className="truncate">
+                {libraries.length === 0
+                  ? '暂无素材库'
+                  : !currentLibraryId
+                  ? '请选择素材库...'
+                  : libraries.find(lib => lib.id === currentLibraryId)?.name || '未知素材库'}
+              </span>
+              <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0 ml-2" />
+            </div>
+
+            {/* 下拉选项列表 */}
+            {isLibrarySelectorOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+                {libraries.map((library) => (
+                  <div
+                    key={library.id}
+                    onClick={() => {
+                      if (library.id !== currentLibraryId) {
+                        handleLibraryClick(library.id);
+                      }
+                      setIsLibrarySelectorOpen(false);
+                    }}
+                    className={`px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 ${
+                      library.id === currentLibraryId ? 'bg-blue-50 dark:bg-blue-900' : ''
+                    }`}
+                  >
+                    <div className="font-medium text-gray-900 dark:text-gray-100">{library.name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate" title={library.path}>
+                      {library.path}
+                    </div>
+                  </div>
+                ))}
+                <div
+                  onClick={() => {
+                    if (isScanning()) {
+                      alert('扫描进行中，请稍后再试或暂停扫描');
+                      return;
+                    }
+                    setShowAddLibrary(true);
+                    setIsLibrarySelectorOpen(false);
+                  }}
+                  className="px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 border-t border-gray-200 dark:border-gray-700 text-blue-600 dark:text-blue-400"
+                >
+                  + 添加新素材库
+                </div>
+              </div>
+            )}
           </div>
 
           {currentLibraryId && libraries.length > 0 && (

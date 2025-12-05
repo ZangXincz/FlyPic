@@ -27,9 +27,11 @@ export async function update(id, updates) {
 
 /**
  * 删除素材库
+ * @param {string} id - 素材库ID
+ * @param {boolean} autoSelectNext - 是否自动选择下一个素材库，默认 true
  */
-export async function remove(id) {
-  return api.delete(`/library/${id}`);
+export async function remove(id, autoSelectNext = true) {
+  return api.delete(`/library/${id}?autoSelectNext=${autoSelectNext}`);
 }
 
 /**
@@ -56,4 +58,11 @@ export async function updatePreferences(preferences) {
  */
 export async function updateTheme(theme) {
   return api.put('/library/theme', { theme });
+}
+
+/**
+ * 验证素材库路径是否存在
+ */
+export async function validate(id) {
+  return api.get(`/library/${id}/validate`);
 }
