@@ -19,6 +19,7 @@ function RightPanel() {
   const [exportProgress, setExportProgress] = useState(0);
   const [isExportingFolder, setIsExportingFolder] = useState(false);
   const [folderExportProgress, setFolderExportProgress] = useState(0);
+  const [pathCopied, setPathCopied] = useState(false);
 
   // 计算实际选中的图片数量（合并 selectedImage 和 selectedImages）
   const actualSelectedCount = (() => {
@@ -35,6 +36,86 @@ function RightPanel() {
   // 判断是单选还是多选
   const isMultiSelect = actualSelectedCount > 1;
   const displayImage = selectedImages.length > 0 ? selectedImages[0] : selectedImage;
+  const { getCurrentLibrary } = useLibraryStore();
+  const currentLibrary = getCurrentLibrary();
+
+  // 检测操作系统并获取路径分隔符
+  const getPathSeparator = () => {
+    // 检测操作系统
+    const platform = navigator.platform.toLowerCase();
+    const userAgent = navigator.userAgent.toLowerCase();
+    
+    // Windows 系统使用反斜杠
+    if (platform.includes('win') || userAgent.includes('windows')) {
+      return '\\';
+    }
+    // macOS 和 Linux 使用正斜杠
+    return '/';
+  };
+
+  // 标准化路径（统一使用当前系统的分隔符）
+  const normalizePath = (path) => {
+    if (!path) return '';
+    const separator = getPathSeparator();
+    // 将所有斜杠统一为当前系统的分隔符
+    return path.replace(/[\\/]+/g, separator);
+  };
+
+  // 获取完整路径（素材库路径 + 图片相对路径）
+  const getFullPath = (imagePath) => {
+    if (!currentLibrary?.path || !imagePath) return imagePath || '';
+    const separator = getPathSeparator();
+    const libraryPath = currentLibrary.path.replace(/[\\/]+$/, ''); // 移除末尾斜杠
+    const relativePath = imagePath.replace(/^[\\/]+/, ''); // 移除开头斜杠
+    const fullPath = `${libraryPath}${separator}${relativePath}`;
+    return normalizePath(fullPath);
+  };
+
+  // 获取多个图片的共同父路径
+  const getCommonParentPath = (images) => {
+    if (!images || images.length === 0) return '';
+    if (images.length === 1) return getFullPath(images[0].path);
+
+    const separator = getPathSeparator();
+    
+    // 获取所有完整路径
+    const fullPaths = images.map(img => getFullPath(img.path));
+    
+    // 分割路径为数组
+    const pathParts = fullPaths.map(path => path.split(/[\\/]/));
+    
+    // 找到共同的前缀路径
+    const commonParts = [];
+    const minLength = Math.min(...pathParts.map(parts => parts.length - 1)); // 排除文件名
+    
+    for (let i = 0; i < minLength; i++) {
+      const part = pathParts[0][i];
+      if (pathParts.every(parts => parts[i] === part)) {
+        commonParts.push(part);
+      } else {
+        break;
+      }
+    }
+    
+    return commonParts.length > 0 ? commonParts.join(separator) : normalizePath(currentLibrary?.path || '');
+  };
+
+  // 复制路径到剪贴板
+  const copyPathToClipboard = async (path) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(path);
+      } else {
+        // 备用方案
+        fallbackCopyText(path);
+      }
+      setPathCopied(true);
+      setTimeout(() => setPathCopied(false), 2000);
+    } catch (error) {
+      console.error('复制路径失败:', error);
+      alert('复制失败，请重试');
+    }
+  };
 
   // 检测移动端
   useEffect(() => {
@@ -693,7 +774,53 @@ function RightPanel() {
   };
 
   const formatDate = (timestamp) => {
-    return new Date(timestamp).toLocaleString('zh-CN');
+    if (!timestamp) return '无数据';
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '无效日期';
+    return date.toLocaleString('zh-CN');
+  };
+
+  // 计算多选图片的统计信息
+  const getMultiSelectStats = () => {
+    const images = getImagesToProcess();
+    if (images.length === 0) return null;
+
+    // 总大小
+    const totalSize = images.reduce((sum, img) => sum + (img.size || 0), 0);
+
+    // 尺寸范围
+    const widths = images.map(img => img.width).filter(Boolean);
+    const heights = images.map(img => img.height).filter(Boolean);
+    const minWidth = widths.length > 0 ? Math.min(...widths) : 0;
+    const maxWidth = widths.length > 0 ? Math.max(...widths) : 0;
+    const minHeight = heights.length > 0 ? Math.min(...heights) : 0;
+    const maxHeight = heights.length > 0 ? Math.max(...heights) : 0;
+
+    // 格式列表（去重）
+    const formats = [...new Set(images.map(img => img.format).filter(Boolean))];
+
+    // 时间范围（支持两种字段名：created_at 和 createdAt）
+    const timestamps = images.map(img => img.createdAt || img.created_at).filter(Boolean);
+    const minTime = timestamps.length > 0 ? Math.min(...timestamps) : null;
+    const maxTime = timestamps.length > 0 ? Math.max(...timestamps) : null;
+
+    const modifiedTimestamps = images.map(img => img.modifiedAt || img.modified_at).filter(Boolean);
+    const minModifiedTime = modifiedTimestamps.length > 0 ? Math.min(...modifiedTimestamps) : null;
+    const maxModifiedTime = modifiedTimestamps.length > 0 ? Math.max(...modifiedTimestamps) : null;
+
+    const sizes = images.map(img => img.size).filter(Boolean);
+    const minSize = sizes.length > 0 ? Math.min(...sizes) : 0;
+    const maxSize = sizes.length > 0 ? Math.max(...sizes) : 0;
+
+    return {
+      count: images.length,
+      totalSize,
+      sizeRange: { min: minSize, max: maxSize },
+      dimensionRange: { minWidth, maxWidth, minHeight, maxHeight },
+      formats,
+      timeRange: { min: minTime, max: maxTime },
+      modifiedTimeRange: { min: minModifiedTime, max: maxModifiedTime }
+    };
   };
 
   return (
@@ -733,37 +860,151 @@ function RightPanel() {
       {/* Image Info - 可滚动区域 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
         <div>
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">基本信息</h3>
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+            {isMultiSelect ? `已选择 ${actualSelectedCount} 张图片` : '基本信息'}
+          </h3>
           <div className="space-y-2 text-sm">
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">文件名:</span>
-              <p className="text-gray-900 dark:text-gray-100 break-all">{selectedImage.filename}</p>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">尺寸:</span>
-              <p className="text-gray-900 dark:text-gray-100">
-                {selectedImage.width} × {selectedImage.height}
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">大小:</span>
-              <p className="text-gray-900 dark:text-gray-100">{formatFileSize(selectedImage.size)}</p>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">格式:</span>
-              <p className="text-gray-900 dark:text-gray-100 uppercase">{selectedImage.format}</p>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">创建时间:</span>
-              <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.created_at)}</p>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">修改时间:</span>
-              <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.modified_at)}</p>
-            </div>
+            {isMultiSelect ? (
+              // 多选模式
+              (() => {
+                const stats = getMultiSelectStats();
+                if (!stats) return null;
+                
+                return (
+                  <>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">数量:</span>
+                      <p className="text-gray-900 dark:text-gray-100">{stats.count} 张图片</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">尺寸范围:</span>
+                      <p className="text-gray-900 dark:text-gray-100">
+                        {stats.dimensionRange.minWidth === stats.dimensionRange.maxWidth && 
+                         stats.dimensionRange.minHeight === stats.dimensionRange.maxHeight ? (
+                          // 所有图片尺寸相同
+                          `${stats.dimensionRange.minWidth} × ${stats.dimensionRange.minHeight}`
+                        ) : (
+                          // 尺寸不同，显示范围
+                          `${stats.dimensionRange.minWidth}~${stats.dimensionRange.maxWidth} × ${stats.dimensionRange.minHeight}~${stats.dimensionRange.maxHeight}`
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">总大小:</span>
+                      <p className="text-gray-900 dark:text-gray-100">{formatFileSize(stats.totalSize)}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">格式:</span>
+                      <p className="text-gray-900 dark:text-gray-100 uppercase">
+                        {stats.formats.join(', ')}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">创建时间:</span>
+                      <p className="text-gray-900 dark:text-gray-100 text-xs">
+                        {stats.timeRange.min && stats.timeRange.max ? (
+                          stats.timeRange.min === stats.timeRange.max ? (
+                            formatDate(stats.timeRange.min)
+                          ) : (
+                            `${formatDate(stats.timeRange.min)} ~ ${formatDate(stats.timeRange.max)}`
+                          )
+                        ) : (
+                          '无数据'
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">修改时间:</span>
+                      <p className="text-gray-900 dark:text-gray-100 text-xs">
+                        {stats.modifiedTimeRange.min && stats.modifiedTimeRange.max ? (
+                          stats.modifiedTimeRange.min === stats.modifiedTimeRange.max ? (
+                            formatDate(stats.modifiedTimeRange.min)
+                          ) : (
+                            `${formatDate(stats.modifiedTimeRange.min)} ~ ${formatDate(stats.modifiedTimeRange.max)}`
+                          )
+                        ) : (
+                          '无数据'
+                        )}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()
+            ) : (
+              // 单选模式
+              <>
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">文件名:</span>
+                  <p className="text-gray-900 dark:text-gray-100 break-all">{selectedImage.filename}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">尺寸:</span>
+                  <p className="text-gray-900 dark:text-gray-100">
+                    {selectedImage.width} × {selectedImage.height}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">大小:</span>
+                  <p className="text-gray-900 dark:text-gray-100">{formatFileSize(selectedImage.size)}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">格式:</span>
+                  <p className="text-gray-900 dark:text-gray-100 uppercase">{selectedImage.format}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">创建时间:</span>
+                  <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.createdAt || selectedImage.created_at)}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">修改时间:</span>
+                  <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.modifiedAt || selectedImage.modified_at)}</p>
+                </div>
+              </>
+            )}
             <div>
               <span className="text-gray-500 dark:text-gray-400">路径:</span>
-              <p className="text-gray-900 dark:text-gray-100 text-xs break-all">{selectedImage.path}</p>
+              <div className="flex items-start gap-2 mt-1">
+                <p 
+                  className="flex-1 text-gray-900 dark:text-gray-100 text-xs break-all cursor-pointer hover:text-blue-500 transition-colors"
+                  onClick={() => {
+                    const path = isMultiSelect 
+                      ? getCommonParentPath(getImagesToProcess())
+                      : getFullPath(selectedImage.path);
+                    copyPathToClipboard(path);
+                  }}
+                  title="点击复制路径"
+                >
+                  {isMultiSelect 
+                    ? getCommonParentPath(getImagesToProcess())
+                    : getFullPath(selectedImage.path)
+                  }
+                </p>
+                <button
+                  onClick={() => {
+                    const path = isMultiSelect 
+                      ? getCommonParentPath(getImagesToProcess())
+                      : getFullPath(selectedImage.path);
+                    copyPathToClipboard(path);
+                  }}
+                  className={`flex-shrink-0 p-1 rounded transition-colors ${
+                    pathCopied
+                      ? 'text-green-500'
+                      : 'text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+                  title="复制路径"
+                >
+                  {pathCopied ? (
+                    <Check className="w-4 h-4" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+              {isMultiSelect && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                  已选择 {actualSelectedCount} 张图片的共同父路径
+                </p>
+              )}
             </div>
           </div>
         </div>
