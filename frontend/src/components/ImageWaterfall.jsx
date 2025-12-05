@@ -12,6 +12,7 @@ import requestManager, { RequestType } from '../services/requestManager';
 import FileViewer from './FileViewer';
 import ContextMenu, { menuItems } from './ContextMenu';
 import UndoToast from './UndoToast';
+import FolderSelector from './FolderSelector';
 
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 100;
@@ -58,7 +59,7 @@ function ImageWaterfall() {
   const { 
     images, selectedImage, setSelectedImage, selectedImages, setSelectedImages, 
     toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, setSelectedFolder,
-    searchKeywords, filters, appendImages, setImageLoadingState, setImages, setFolders
+    searchKeywords, filters, appendImages, setImageLoadingState, setImages, folders, setFolders
   } = useImageStore();
   
   const { thumbnailHeight, isResizingPanels } = useUIStore();
@@ -117,6 +118,8 @@ function ImageWaterfall() {
   const [contextMenu, setContextMenu] = useState({ isOpen: false, position: null, image: null });
   const [undoToast, setUndoToast] = useState({ isVisible: false, message: '', count: 0 });
   const [undoHistory, setUndoHistory] = useState([]); // 撤销历史栈，支持多次撤销
+  const [showFolderSelector, setShowFolderSelector] = useState(false); // 显示文件夹选择器
+  const [moveItems, setMoveItems] = useState([]); // 待移动的项
 
   // 监听文件夹切换，切换时关闭Toast
   useEffect(() => {
@@ -629,15 +632,71 @@ function ImageWaterfall() {
     });
   };
 
+  // 打开移动文件夹选择器
+  const handleMoveClick = useCallback(() => {
+    // 准备待移动的项
+    const itemsToMove = selectedImages.length > 0
+      ? selectedImages.map(img => ({ type: 'file', path: img.path }))
+      : selectedImage
+      ? [{ type: 'file', path: selectedImage.path }]
+      : [];
+
+    if (itemsToMove.length === 0) return;
+
+    setMoveItems(itemsToMove);
+    setShowFolderSelector(true);
+    setContextMenu({ isOpen: false, position: null, image: null });
+  }, [selectedImages, selectedImage]);
+
+  // 执行移动
+  const handleMove = useCallback(async (targetFolder) => {
+    if (!currentLibraryId || moveItems.length === 0) return;
+
+    setShowFolderSelector(false);
+
+    // 1. 立即从当前列表中移除这些图片（乐观更新）
+    const movedPaths = new Set(moveItems.map(item => item.path));
+    const remainingImages = images.filter(img => !movedPaths.has(img.path));
+    setImages(remainingImages);
+    clearSelection();
+
+    try {
+      // 2. 后台执行移动和刷新（并行）
+      const [result, foldersRes] = await Promise.all([
+        fileAPI.move(currentLibraryId, moveItems, targetFolder),
+        imageAPI.getFolders(currentLibraryId)
+      ]);
+
+      if (result.failed && result.failed.length > 0) {
+        alert(`移动失败: ${result.failed[0].error}`);
+        // 失败时恢复图片列表
+        setImages(images);
+      } else {
+        console.log(`✅ 已移动 ${moveItems.length} 个文件到: ${targetFolder || '根目录'}`);
+      }
+
+      // 3. 刷新文件夹列表
+      setFolders(foldersRes.folders);
+    } catch (error) {
+      console.error('移动失败:', error);
+      alert('移动失败: ' + (error.message || '未知错误'));
+      // 失败时恢复图片列表
+      setImages(images);
+    } finally {
+      setMoveItems([]);
+    }
+  }, [currentLibraryId, moveItems, images, setImages, clearSelection, setFolders]);
+
   // 准备右键菜单选项
   const getContextMenuOptions = useCallback((image) => {
     return [
+      menuItems.move(handleMoveClick),
       menuItems.delete(async () => {
         setContextMenu({ isOpen: false, position: null, image: null });
         await handleQuickDelete();
       })
     ];
-  }, [selectedImages, selectedImage]);
+  }, [selectedImages, selectedImage, handleMoveClick]);
 
   // 渲染单个图片单元格
   const renderImageCell = (image, flatIndex) => {
@@ -672,10 +731,18 @@ function ImageWaterfall() {
           onContextMenu={(e) => handleContextMenu(e, image)}
           draggable={true}
           onDragStart={(e) => {
-            const items = selectedImages.length > 0 && selectedImages.some(img => img.id === image.id)
+            // 准备拖拽的图片列表
+            const draggedImages = selectedImages.length > 0 && selectedImages.some(img => img.id === image.id)
               ? selectedImages
               : [image];
-            e.dataTransfer.setData('flypic/images', JSON.stringify(items));
+            
+            // 转换为 items 格式（type + path）
+            const items = draggedImages.map(img => ({
+              type: 'file',
+              path: img.path
+            }));
+            
+            e.dataTransfer.setData('application/json', JSON.stringify({ items }));
             e.dataTransfer.effectAllowed = 'move';
           }}
         >
@@ -862,6 +929,19 @@ function ImageWaterfall() {
           // 不清空历史栈，允许Toast消失后仍可Ctrl+Z
         }}
       />
+
+      {/* 文件夹选择器 */}
+      {showFolderSelector && (
+        <FolderSelector
+          folders={folders}
+          currentFolder={selectedFolder}
+          onSelect={handleMove}
+          onClose={() => {
+            setShowFolderSelector(false);
+            setMoveItems([]);
+          }}
+        />
+      )}
     </div>
   );
 }

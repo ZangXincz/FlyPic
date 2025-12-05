@@ -36,9 +36,43 @@ function ContextMenu({ isOpen, position, onClose, options }) {
   if (!isOpen || !position) return null;
 
   // 计算菜单位置，防止超出屏幕
+  const calculateMenuPosition = () => {
+    // 估算菜单尺寸（实际渲染后会更准确）
+    const menuWidth = 200;
+    const menuHeight = options.length * 40 + 16; // 每项约40px + padding
+    
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    let left = position.x;
+    let top = position.y;
+    
+    // 检查右边界
+    if (left + menuWidth > viewportWidth) {
+      left = viewportWidth - menuWidth - 10; // 留10px边距
+    }
+    
+    // 检查底部边界
+    if (top + menuHeight > viewportHeight) {
+      // 优先向上显示
+      top = position.y - menuHeight;
+      // 如果向上也超出，则贴底显示
+      if (top < 0) {
+        top = viewportHeight - menuHeight - 10;
+      }
+    }
+    
+    // 确保不超出左边界和顶部
+    left = Math.max(10, left);
+    top = Math.max(10, top);
+    
+    return { left, top };
+  };
+
+  const menuPosition = calculateMenuPosition();
   const menuStyle = {
-    left: `${position.x}px`,
-    top: `${position.y}px`,
+    left: `${menuPosition.left}px`,
+    top: `${menuPosition.top}px`,
   };
 
   const handleOptionClick = (action) => {

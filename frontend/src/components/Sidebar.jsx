@@ -9,6 +9,7 @@ import { onUserActionStart } from '../services/imageLoadService';
 import LibraryMissingModal from './LibraryMissingModal';
 import ContextMenu, { menuItems } from './ContextMenu';
 import UndoToast from './UndoToast';
+import FolderSelector from './FolderSelector';
 
 // 检查素材库扫描状态
 const checkScanStatus = async (libraryId) => {
@@ -48,6 +49,9 @@ function Sidebar() {
   const [contextMenu, setContextMenu] = useState({ isOpen: false, position: null, folder: null });
   const [undoToast, setUndoToast] = useState({ isVisible: false, message: '', count: 0 });
   const [undoHistory, setUndoHistory] = useState([]); // 撤销历史栈，支持多次撤销
+  const [dragOverFolder, setDragOverFolder] = useState(null); // 拖拽悬停的文件夹
+  const [showFolderSelector, setShowFolderSelector] = useState(false); // 显示文件夹选择器
+  const [moveFolderPath, setMoveFolderPath] = useState(null); // 待移动的文件夹路径
   const folderSearchDebounceRef = useRef(null);
   const librarySelectorRef = useRef(null);
 
@@ -329,6 +333,114 @@ function Sidebar() {
       });
       alert('撤销失败: ' + (error.message || '未知错误'));
     });
+  };
+
+  // 处理拖拽到文件夹
+  const handleDrop = async (e, targetFolder) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolder(null);
+
+    if (!currentLibraryId) return;
+
+    try {
+      const data = JSON.parse(e.dataTransfer.getData('application/json'));
+      const { items } = data;
+
+      if (!items || items.length === 0) return;
+
+      // 检查是否包含文件夹
+      const hasFolders = items.some(item => item.type === 'folder');
+      
+      // 1. 如果是移动文件，立即从UI中移除（乐观更新）
+      if (!hasFolders) {
+        const { images, setImages } = useImageStore.getState();
+        const movedPaths = new Set(items.map(item => item.path));
+        const remainingImages = images.filter(img => !movedPaths.has(img.path));
+        setImages(remainingImages);
+      }
+
+      // 2. 执行移动和刷新（并行）
+      const [result, foldersRes] = await Promise.all([
+        fileAPI.move(currentLibraryId, items, targetFolder.path),
+        imageAPI.getFolders(currentLibraryId)
+      ]);
+
+      if (result.failed && result.failed.length > 0) {
+        alert(`移动失败: ${result.failed[0].error}`);
+      } else {
+        console.log(`✅ 已移动 ${items.length} 个${hasFolders ? '文件夹' : '文件'}到: ${targetFolder.path}`);
+      }
+      
+      // 3. 刷新文件夹列表
+      const { setFolders } = useImageStore.getState();
+      setFolders(foldersRes.folders);
+    } catch (error) {
+      console.error('拖拽移动失败:', error);
+    }
+  };
+
+  const handleDragOver = (e, folder) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolder(folder.path);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolder(null);
+  };
+
+  // 打开文件夹移动选择器
+  const handleMoveFolderClick = (folderPath) => {
+    setMoveFolderPath(folderPath);
+    setShowFolderSelector(true);
+    setContextMenu({ isOpen: false, position: null, folder: null });
+  };
+
+  // 执行文件夹移动
+  const handleMoveFolder = async (targetFolder) => {
+    if (!currentLibraryId || !moveFolderPath) return;
+
+    setShowFolderSelector(false);
+
+    // 计算移动后的新路径
+    const folderName = moveFolderPath.split('/').pop();
+    const newPath = targetFolder ? `${targetFolder}/${folderName}` : folderName;
+
+    try {
+      const items = [{ type: 'folder', path: moveFolderPath }];
+      
+      // 1. 后台执行移动和刷新（并行）
+      const [result, foldersRes] = await Promise.all([
+        fileAPI.move(currentLibraryId, items, targetFolder),
+        imageAPI.getFolders(currentLibraryId)
+      ]);
+
+      if (result.failed && result.failed.length > 0) {
+        alert(`移动失败: ${result.failed[0].error}`);
+      } else {
+        // 2. 移动成功，选中新位置
+        setSelectedFolder(newPath);
+        console.log(`✅ 已移动文件夹: ${moveFolderPath} -> ${newPath}`);
+      }
+
+      // 3. 刷新文件夹列表
+      const { setFolders } = useImageStore.getState();
+      setFolders(foldersRes.folders);
+    } catch (error) {
+      console.error('移动文件夹失败:', error);
+      alert('移动失败: ' + (error.message || '未知错误'));
+      
+      // 失败时重新加载文件夹列表
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        const { setFolders } = useImageStore.getState();
+        setFolders(foldersRes.folders);
+      });
+    } finally {
+      setMoveFolderPath(null);
+    }
   };
 
   const handleAddLibrary = async () => {
@@ -712,10 +824,13 @@ function Sidebar() {
       return (
         <div key={folder.path}>
           <div
-            className={`flex items-center px-3 py-2 cursor-pointer rounded-md transition-colors ${isSelected
+            className={`flex items-center px-3 py-2 rounded-md cursor-pointer transition-colors ${
+              isSelected
                 ? 'bg-blue-50 dark:bg-blue-900'
+                : dragOverFolder === folder.path
+                ? 'bg-green-100 dark:bg-green-900'
                 : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+            }`}
             style={{ paddingLeft: `${level * 16 + 12}px` }}
             onClick={() => handleFolderClick(folder)}
             onContextMenu={(e) => {
@@ -726,6 +841,16 @@ function Sidebar() {
                 folder: folder
               });
             }}
+            draggable={true}
+            onDragStart={(e) => {
+              // 拖拽文件夹
+              const items = [{ type: 'folder', path: folder.path }];
+              e.dataTransfer.setData('application/json', JSON.stringify({ items }));
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onDrop={(e) => handleDrop(e, folder)}
+            onDragOver={(e) => handleDragOver(e, folder)}
+            onDragLeave={handleDragLeave}
           >
             {/* 展开/折叠图标 - 独立点击区域 */}
             {hasChildren ? (
@@ -1046,6 +1171,7 @@ function Sidebar() {
         position={contextMenu.position}
         onClose={() => setContextMenu({ isOpen: false, position: null, folder: null })}
         options={contextMenu.folder ? [
+          menuItems.move(() => handleMoveFolderClick(contextMenu.folder.path)),
           menuItems.delete(async () => {
             setContextMenu({ isOpen: false, position: null, folder: null });
             await handleDeleteFolder(contextMenu.folder.path);
@@ -1063,6 +1189,19 @@ function Sidebar() {
           // 不清空历史栈，允许Toast消失后仍可Ctrl+Z
         }}
       />
+
+      {/* 文件夹选择器 */}
+      {showFolderSelector && (
+        <FolderSelector
+          folders={folders}
+          currentFolder={moveFolderPath}
+          onSelect={handleMoveFolder}
+          onClose={() => {
+            setShowFolderSelector(false);
+            setMoveFolderPath(null);
+          }}
+        />
+      )}
     </div>
   );
 }

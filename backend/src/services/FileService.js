@@ -550,36 +550,106 @@ class FileService {
 
     for (const item of items) {
       try {
-        const oldFullPath = path.join(libraryPath, item.path);
-        const fileName = path.basename(item.path);
-        const newFullPath = path.join(libraryPath, targetFolder, fileName);
+        // 归一化路径（使用正斜杠）
+        const oldPath = item.path.replace(/\\/g, '/');
+        const fileName = path.basename(oldPath);
+        const normalizedTarget = targetFolder ? targetFolder.replace(/\\/g, '/') : '';
 
-        // 检查源文件是否存在
+        // 目标文件夹相对路径
+        const newRelativeFolder = normalizedTarget
+          ? `${normalizedTarget}/${fileName}`
+          : fileName;
+
+        const oldFullPath = path.join(libraryPath, oldPath);
+        const newFullPath = path.join(libraryPath, newRelativeFolder);
+
+        // 检查源路径是否存在
         if (!fs.existsSync(oldFullPath)) {
-          results.failed.push({ path: item.path, error: '源文件不存在' });
+          results.failed.push({ path: oldPath, error: '源文件不存在' });
           continue;
         }
 
-        // 检查目标文件夹是否存在
-        const targetFullPath = path.join(libraryPath, targetFolder);
+        // 检查目标父级文件夹是否存在
+        const targetFullPath = normalizedTarget
+          ? path.join(libraryPath, normalizedTarget)
+          : libraryPath;
         if (!fs.existsSync(targetFullPath)) {
           fs.mkdirSync(targetFullPath, { recursive: true });
         }
 
-        // 检查目标是否已存在同名文件
+        // 检查目标是否已存在同名文件/文件夹
         if (fs.existsSync(newFullPath)) {
-          results.failed.push({ path: item.path, error: '目标位置已存在同名文件' });
+          results.failed.push({ path: oldPath, error: '目标位置已存在同名文件' });
           continue;
         }
 
-        // 移动文件（同分区使用 rename，跨分区自动降级为复制+删除）
-        fs.renameSync(oldFullPath, newFullPath);
+        if (item.type === 'folder') {
+          // ===== 文件夹移动逻辑 =====
 
-        // 更新数据库
-        const newRelativePath = path.relative(libraryPath, newFullPath).replace(/\\/g, '/');
-        this._updatePathInDatabase(db, item.path, newRelativePath);
+          // 1. 先在磁盘上移动整个文件夹树
+          fs.renameSync(oldFullPath, newFullPath);
 
-        results.success.push({ oldPath: item.path, newPath: newRelativePath });
+          // 2. 更新 folders 表中该文件夹及其所有子文件夹的 path / parent_path
+          const oldFolderPath = oldPath;
+          const newFolderPath = newRelativeFolder;
+          const len = oldFolderPath.length + 1; // 用于 substr 去掉前缀
+
+          // 2.1 更新根文件夹记录
+          const updateRootFolderStmt = db.db.prepare(`
+            UPDATE folders
+            SET path = ?, parent_path = ?
+            WHERE path = ?
+          `);
+          updateRootFolderStmt.run(
+            newFolderPath,
+            normalizedTarget || null,
+            oldFolderPath
+          );
+
+          // 2.2 更新子文件夹记录（保持层级结构）
+          const updateChildFoldersStmt = db.db.prepare(`
+            UPDATE folders
+            SET path = ? || substr(path, ?),
+                parent_path = ? || substr(parent_path, ?)
+            WHERE path LIKE ?
+          `);
+          updateChildFoldersStmt.run(
+            newFolderPath,
+            len,
+            newFolderPath,
+            len,
+            `${oldFolderPath}/%`
+          );
+
+          // 3. 更新 images 表中所有属于该文件夹及子文件夹的图片路径和 folder 字段
+          const updateImagesStmt = db.db.prepare(`
+            UPDATE images
+            SET path = ? || substr(path, ?),
+                folder = ? || substr(folder, ?)
+            WHERE folder = ? OR folder LIKE ?
+          `);
+          updateImagesStmt.run(
+            newFolderPath,
+            len,
+            newFolderPath,
+            len,
+            oldFolderPath,
+            `${oldFolderPath}/%`
+          );
+
+          results.success.push({ oldPath: oldFolderPath, newPath: newFolderPath });
+        } else {
+          // ===== 单个文件移动逻辑（保持原有行为） =====
+
+          // 移动文件（同分区使用 rename，跨分区自动降级为复制+删除）
+          fs.renameSync(oldFullPath, newFullPath);
+
+          // 更新数据库（单个图片记录）
+          const newRelativePath = newRelativeFolder.replace(/\\/g, '/');
+          this._updatePathInDatabase(db, oldPath, newRelativePath);
+
+          results.success.push({ oldPath, newPath: newRelativePath });
+        }
       } catch (error) {
         console.error(`移动失败 ${item.path}:`, error.message);
         results.failed.push({ path: item.path, error: error.message });
