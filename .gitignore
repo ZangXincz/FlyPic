@@ -46,7 +46,8 @@ Knowledge base/
 
 # 构建输出
 dist/
-.zip
+flypic/
+flypic.zip
 
 # 测试数据
 test-library/

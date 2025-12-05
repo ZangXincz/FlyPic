@@ -6,7 +6,8 @@ const {
   getFileType,
   calculateFileHash,
   getImageMetadata,
-  generateImageThumbnails
+  generateImageThumbnails,
+  clearSharpCache
 } = require('./thumbnail');
 const scanManager = require('./scanManager');
 
@@ -489,6 +490,15 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     // Update folder image counts
     db.updateAllFolderCounts();
 
+    // 🎯 关键：扫描完成后清理 Sharp 缓存，释放内存
+    clearSharpCache();
+    
+    // 强制 GC（如果可用）
+    if (global.gc) {
+      global.gc();
+      console.log('🧹 内存已清理');
+    }
+
     // 标记扫描完成
     if (libraryId) {
       scanManager.completeScan(libraryId);
@@ -640,6 +650,9 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     const totalTime = (Date.now() - startTime) / 1000;
     console.log(`✅ 同步完成 (${totalTime.toFixed(1)}秒)`);
 
+    // 清理 Sharp 缓存
+    clearSharpCache();
+
     return {
       added: toAdd.length,
       modified: modifiedCount,
@@ -647,6 +660,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     };
   } catch (error) {
     console.error('❌ 同步失败:', error.message);
+    clearSharpCache();
     throw error;
   }
 }
@@ -712,6 +726,8 @@ async function quickSync(libraryPath, db) {
   const elapsed = Date.now() - startTime;
   if (toAdd.length > 0 || toDelete.length > 0) {
     console.log(`⚡ 快速同步: +${toAdd.length} -${toDelete.length} (${elapsed}ms)`);
+    // 有变化时清理 Sharp 缓存
+    clearSharpCache();
   }
 
   return { added: toAdd.length, deleted: toDelete.length };

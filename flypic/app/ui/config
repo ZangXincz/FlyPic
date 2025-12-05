@@ -6,7 +6,7 @@
       "type": "url",
       "protocol": "http",
       "port": "15002",
-      "allUsers": true,
+      "allUsers": false,
       "control": {
         "portPerm": "editable"
       }
