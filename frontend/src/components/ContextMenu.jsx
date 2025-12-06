@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { Trash2, Edit3, Move, Copy } from 'lucide-react';
+import { Trash2, Edit3, Move, Copy, FolderPlus } from 'lucide-react';
 
 function ContextMenu({ isOpen, position, onClose, options }) {
   const menuRef = useRef(null);
@@ -145,6 +145,16 @@ export const menuItems = {
     icon: <Copy size={16} />,
     label: '复制到...',
     shortcut: 'Ctrl+C',
+    action
+  }),
+  newSiblingFolder: (action) => ({
+    icon: <FolderPlus size={16} />,
+    label: '新建同级文件夹',
+    action
+  }),
+  newSubFolder: (action) => ({
+    icon: <FolderPlus size={16} />,
+    label: '新建子文件夹',
     action
   }),
   divider: () => ({ divider: true })

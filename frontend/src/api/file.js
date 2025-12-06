@@ -92,5 +92,18 @@ export const fileAPI = {
       items
     });
     return response.data;
+  },
+
+  /**
+   * 创建空文件夹
+   * @param {string} libraryId - 素材库ID
+   * @param {string} folderPath - 文件夹路径
+   */
+  async createFolder(libraryId, folderPath) {
+    const response = await axios.post(`${API_BASE}/api/file/create-folder`, {
+      libraryId,
+      folderPath
+    });
+    return response.data;
   }
 };

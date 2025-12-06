@@ -155,4 +155,27 @@ router.post('/restore', asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * 创建空文件夹
+ * POST /api/file/create-folder
+ * Body: { libraryId, folderPath }
+ */
+router.post('/create-folder', asyncHandler(async (req, res) => {
+  const { libraryId, folderPath } = req.body;
+
+  if (!libraryId || !folderPath) {
+    return res.status(400).json({
+      success: false,
+      error: '缺少必需参数'
+    });
+  }
+
+  const result = await fileService.createFolder(libraryId, folderPath);
+
+  res.json({
+    success: true,
+    data: result
+  });
+}));
+
 module.exports = router;

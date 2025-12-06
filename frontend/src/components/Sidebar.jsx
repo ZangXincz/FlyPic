@@ -54,9 +54,12 @@ function Sidebar() {
   const [moveFolderPath, setMoveFolderPath] = useState(null); // 待移动的文件夹路径
   const [renamingFolder, setRenamingFolder] = useState(null); // 正在重命名的文件夹
   const [editingFolderName, setEditingFolderName] = useState(''); // 编辑中的文件夹名
+  const [creatingFolder, setCreatingFolder] = useState(null); // 正在创建的文件夹 { type: 'sibling' | 'child', parentPath: string }
+  const [newFolderName, setNewFolderName] = useState(''); // 新建文件夹名称
   const folderSearchDebounceRef = useRef(null);
   const librarySelectorRef = useRef(null);
   const folderNameInputRef = useRef(null);
+  const newFolderInputRef = useRef(null);
 
   // 文件夹搜索防抖（300ms）
   const handleFolderSearchChange = (value) => {
@@ -561,6 +564,69 @@ function Sidebar() {
     setEditingFolderName('');
   };
 
+  // 开始创建文件夹
+  const handleStartCreateFolder = (type, basePath) => {
+    // type: 'sibling' 同级 | 'child' 子级
+    // basePath: 基准文件夹路径
+    const parentPath = type === 'sibling' 
+      ? (basePath.includes('/') ? basePath.substring(0, basePath.lastIndexOf('/')) : '')
+      : basePath;
+    
+    setCreatingFolder({ type, parentPath, basePath });
+    setNewFolderName('新建文件夹');
+    setContextMenu({ isOpen: false, position: null, folder: null });
+    
+    // 延迟聚焦
+    setTimeout(() => {
+      if (newFolderInputRef.current) {
+        newFolderInputRef.current.focus();
+        newFolderInputRef.current.select();
+      }
+    }, 50);
+  };
+
+  // 完成创建文件夹
+  const handleFinishCreateFolder = async () => {
+    if (!creatingFolder || !newFolderName.trim()) {
+      setCreatingFolder(null);
+      setNewFolderName('');
+      return;
+    }
+
+    const folderName = newFolderName.trim();
+    const { parentPath } = creatingFolder;
+    const newFolderPath = parentPath ? `${parentPath}/${folderName}` : folderName;
+
+    try {
+      // 调用后端 API 创建文件夹
+      await fileAPI.createFolder(currentLibraryId, newFolderPath);
+      
+      console.log(`✅ 文件夹创建成功: ${newFolderPath}`);
+      
+      // 刷新文件夹列表
+      const foldersRes = await imageAPI.getFolders(currentLibraryId);
+      const { setFolders } = useImageStore.getState();
+      setFolders(foldersRes.folders);
+      
+      // 展开父文件夹
+      if (parentPath) {
+        setExpandedFolders(prev => new Set([...prev, parentPath]));
+      }
+    } catch (error) {
+      console.error('创建文件夹失败:', error);
+      alert('创建文件夹失败: ' + (error.message || '未知错误'));
+    } finally {
+      setCreatingFolder(null);
+      setNewFolderName('');
+    }
+  };
+
+  // 取消创建文件夹
+  const handleCancelCreateFolder = () => {
+    setCreatingFolder(null);
+    setNewFolderName('');
+  };
+
   const handleAddLibrary = async () => {
     // 扫描期间禁止添加素材库
     if (isScanning()) {
@@ -1021,7 +1087,66 @@ function Sidebar() {
             {/* 图片数量 */}
             <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{folder.imageCount}</span>
           </div>
+          
+          {/* 新建子文件夹输入框 */}
+          {creatingFolder && creatingFolder.type === 'child' && creatingFolder.basePath === folder.path && isExpanded && (
+            <div
+              className="flex items-center py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+              style={{ paddingLeft: `${(level + 1) * 16 + 12}px` }}
+            >
+              <div className="w-5 mr-1" />
+              <Folder className="w-4 h-4 mr-2 text-gray-500 flex-shrink-0" />
+              <input
+                ref={newFolderInputRef}
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleFinishCreateFolder();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    handleCancelCreateFolder();
+                  }
+                }}
+                onBlur={handleFinishCreateFolder}
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 text-sm text-gray-700 dark:text-gray-300 bg-transparent border-none outline-none focus:outline-none underline decoration-2 decoration-green-500 underline-offset-2"
+              />
+            </div>
+          )}
+          
           {hasChildren && isExpanded && renderFolderTree(folder.children, level + 1)}
+          
+          {/* 新建同级文件夹输入框（在当前文件夹的子元素之后） */}
+          {creatingFolder && creatingFolder.type === 'sibling' && creatingFolder.basePath === folder.path && (
+            <div
+              className="flex items-center py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+              style={{ paddingLeft: `${level * 16 + 12}px` }}
+            >
+              <div className="w-5 mr-1" />
+              <Folder className="w-4 h-4 mr-2 text-gray-500 flex-shrink-0" />
+              <input
+                ref={newFolderInputRef}
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleFinishCreateFolder();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    handleCancelCreateFolder();
+                  }
+                }}
+                onBlur={handleFinishCreateFolder}
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 text-sm text-gray-700 dark:text-gray-300 bg-transparent border-none outline-none focus:outline-none underline decoration-2 decoration-green-500 underline-offset-2"
+              />
+            </div>
+          )}
         </div>
       );
     });
@@ -1313,6 +1438,9 @@ function Sidebar() {
         position={contextMenu.position}
         onClose={() => setContextMenu({ isOpen: false, position: null, folder: null })}
         options={contextMenu.folder ? [
+          menuItems.newSiblingFolder(() => handleStartCreateFolder('sibling', contextMenu.folder.path)),
+          menuItems.newSubFolder(() => handleStartCreateFolder('child', contextMenu.folder.path)),
+          menuItems.divider(),
           menuItems.rename(() => handleStartRenameFolder(contextMenu.folder)),
           menuItems.move(() => handleMoveFolderClick(contextMenu.folder.path)),
           menuItems.delete(async () => {

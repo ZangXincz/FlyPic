@@ -986,6 +986,64 @@ class FileService {
   }
 
   /**
+   * 创建空文件夹
+   * @param {string} libraryId - 素材库ID
+   * @param {string} folderPath - 文件夹路径（相对路径）
+   */
+  async createFolder(libraryId, folderPath) {
+    const db = this._getDatabase(libraryId);
+    const libraryPath = db.libraryPath;
+    const fullPath = path.join(libraryPath, folderPath);
+
+    // 检查文件夹是否已存在
+    if (fs.existsSync(fullPath)) {
+      throw new Error('文件夹已存在');
+    }
+
+    // 创建文件夹
+    fs.mkdirSync(fullPath, { recursive: true });
+    console.log(`📁 创建文件夹: ${folderPath}`);
+
+    // 添加到数据库
+    const normalizedPath = folderPath.replace(/\\/g, '/');
+    const parentPath = normalizedPath.includes('/') 
+      ? normalizedPath.substring(0, normalizedPath.lastIndexOf('/'))
+      : '';
+    const name = normalizedPath.split('/').pop();
+
+    // 确保父文件夹链存在
+    if (parentPath) {
+      let current = parentPath;
+      while (current && current !== '.') {
+        const existing = db.getFolderByPath(current);
+        if (!existing) {
+          const parent = path.posix.dirname(current);
+          const folderName = current.split('/').pop();
+          db.insertFolder({
+            path: current,
+            parent_path: parent === '.' ? '' : parent,
+            name: folderName,
+            image_count: 0
+          });
+        }
+        const parent = path.posix.dirname(current);
+        if (parent === current) break;
+        current = parent;
+      }
+    }
+
+    // 插入新文件夹
+    db.insertFolder({
+      path: normalizedPath,
+      parent_path: parentPath,
+      name: name,
+      image_count: 0
+    });
+
+    return { path: normalizedPath };
+  }
+
+  /**
    * 删除缩略图（私有方法）
    */
   _deleteThumbnail(db, imagePath) {
