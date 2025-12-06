@@ -62,7 +62,7 @@ function ImageWaterfall() {
     images, selectedImage, setSelectedImage, selectedImages, setSelectedImages, 
     toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, setSelectedFolder,
     searchKeywords, filters, appendImages, setImageLoadingState, setImages, folders, setFolders,
-    renamingImage, setRenamingImage, updateImage
+    renamingImage, setRenamingImage, updateImage, setSelectedFolderItem
   } = useImageStore();
   
   const { thumbnailHeight, isResizingPanels } = useUIStore();
@@ -468,6 +468,9 @@ function ImageWaterfall() {
 
   // 处理图片点击（支持 Ctrl/Shift 多选）
   const handleImageClick = useCallback((image, event, imageIndex) => {
+    // 关键修复：点击图片时清空文件夹选中状态
+    setSelectedFolderItem(null);
+    
     if (event.ctrlKey || event.metaKey) {
       // Ctrl/Cmd 点击：切换选中状态
       event.preventDefault();
@@ -486,7 +489,7 @@ function ImageWaterfall() {
       setSelectedImage(image);
       setLastSelectedIndex(imageIndex);
     }
-  }, [flatImages, lastSelectedIndex, toggleImageSelection, setSelectedImages, clearSelection, setSelectedImage]);
+  }, [flatImages, lastSelectedIndex, toggleImageSelection, setSelectedImages, clearSelection, setSelectedImage, setSelectedFolderItem]);
 
   // 处理右键菜单
   const handleContextMenu = useCallback((e, image) => {

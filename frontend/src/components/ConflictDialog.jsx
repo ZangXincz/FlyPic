@@ -95,7 +95,7 @@ function ConflictDialog({ isOpen, conflicts, onResolve, onCancel }) {
               onClick={() => handleResolveAll('rename')}
               className="w-full px-4 py-2 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800 text-gray-900 dark:text-white rounded-lg transition-colors text-left"
             >
-              <div className="font-medium">保留两者（推荐）</div>
+              <div className="font-medium">保留两者</div>
               <div className="text-xs text-gray-600 dark:text-gray-400">
                 自动重命名为 "文件名 (1).ext"
               </div>

@@ -143,7 +143,7 @@ export const menuItems = {
   }),
   copy: (action) => ({
     icon: <Copy size={16} />,
-    label: '复制到...',
+    label: '复制',
     shortcut: 'Ctrl+C',
     action
   }),

@@ -15,7 +15,8 @@ export const useImageStore = create((set, get) => ({
   
   // 文件夹
   folders: [],
-  selectedFolder: null,
+  selectedFolder: null,  // 当前浏览的文件夹路径
+  selectedFolderItem: null,  // 选中的文件夹对象（用于显示详情、操作等）
   
   // 搜索和过滤
   searchKeywords: '',
@@ -67,12 +68,14 @@ export const useImageStore = create((set, get) => ({
     };
   }),
   
-  clearSelection: () => set({ selectedImages: [], selectedImage: null }),
+  clearSelection: () => set({ selectedImages: [], selectedImage: null, selectedFolderItem: null }),
   
   // 文件夹操作
   setFolders: (folders) => set({ folders }),
   
   setSelectedFolder: (folder) => set({ selectedFolder: folder }),
+  
+  setSelectedFolderItem: (folderItem) => set({ selectedFolderItem: folderItem }),
   
   // 搜索和过滤
   setSearchKeywords: (keywords) => set({ searchKeywords: keywords }),

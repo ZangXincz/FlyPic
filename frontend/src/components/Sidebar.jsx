@@ -33,7 +33,7 @@ function Sidebar() {
     expandLibrarySelector,
     resetExpandLibrarySelector
   } = useLibraryStore();
-  const { folders, selectedFolder, totalImageCount, setSelectedFolder } = useImageStore();
+  const { folders, selectedFolder, totalImageCount, setSelectedFolder, setSelectedFolderItem } = useImageStore();
   const { isScanning } = useScanStore();
 
   const [showAddLibrary, setShowAddLibrary] = useState(false);
@@ -993,6 +993,11 @@ function Sidebar() {
       // 暂停空闲加载
       onUserActionStart();
       setSelectedFolder(folder.path);
+      
+      // 关键修复：清空图片选中，设置文件夹为选中项
+      const { clearSelection, setSelectedFolderItem: setFolderItemGlobal } = useImageStore.getState();
+      clearSelection();  // 清空所有图片选中状态
+      setFolderItemGlobal(folder);  // 设置文件夹为选中项
     } else if (hasChildren) {
       // 如果已经选中，且有子文件夹，则展开/折叠
       toggleFolder(folder.path);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Copy, Download, Check, FolderDown, ArrowLeft } from 'lucide-react';
+import { Copy, Download, Check, FolderDown, ArrowLeft, Folder } from 'lucide-react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
@@ -10,7 +10,7 @@ import JSZip from 'jszip';
 
 function RightPanel() {
   const { currentLibraryId } = useLibraryStore();
-  const { selectedImage, selectedImages, selectedFolder, images, setSelectedImage, updateImage } = useImageStore();
+  const { selectedImage, selectedImages, selectedFolder, selectedFolderItem, images, setSelectedImage, updateImage } = useImageStore();
   const { setMobileView, isResizingPanels, resizingSide } = useUIStore();
   const { copyToClipboard } = useClipboardStore();
   const [isMobile, setIsMobile] = useState(false);
@@ -233,10 +233,14 @@ function RightPanel() {
     };
   }, [selectedImage, currentLibraryId, isResizingPanels, resizingSide]);
 
-  if (!selectedImage && selectedImages.length === 0) {
+  // 判断显示类型：文件夹详情 or 图片详情 or 空状态
+  const isShowingFolder = selectedFolderItem && !selectedImage && selectedImages.length === 0;
+  const isShowingImage = !isShowingFolder && (selectedImage || selectedImages.length > 0);
+  
+  if (!isShowingFolder && !isShowingImage) {
     return (
       <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex items-center justify-center">
-        <p className="text-gray-400 dark:text-gray-500 text-sm">选择图片查看详情</p>
+        <p className="text-gray-400 dark:text-gray-500 text-sm">选择文件或文件夹查看详情</p>
       </div>
     );
   }
@@ -894,6 +898,134 @@ function RightPanel() {
     };
   };
 
+  // 递归统计文件夹下的所有图片（包含子文件夹）
+  const getFolderStats = (folderPath) => {
+    // 筛选出当前文件夹及其子文件夹下的所有图片
+    const folderImages = images.filter(img => {
+      const imgFolder = img.folder || '';
+      // 图片在当前文件夹，或在其子文件夹中
+      return imgFolder === folderPath || imgFolder.startsWith(folderPath + '/');
+    });
+    
+    const totalCount = folderImages.length;
+    const totalSize = folderImages.reduce((sum, img) => sum + (img.size || 0), 0);
+    
+    return { totalCount, totalSize };
+  };
+
+  // ========== 文件夹详情渲染 ==========
+  if (isShowingFolder) {
+    const folderPath = selectedFolderItem.path;
+    const folderName = selectedFolderItem.name;
+    const { totalCount, totalSize } = getFolderStats(folderPath);
+    const fullPath = currentLibrary?.path 
+      ? normalizePath(`${currentLibrary.path}${getPathSeparator()}${folderPath}`)
+      : folderPath;
+
+    return (
+      <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col h-full">
+        {/* 移动端返回按钮 */}
+        {isMobile && (
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center">
+            <button
+              onClick={() => setMobileView('main')}
+              className="flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:text-blue-500"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span className="text-sm font-medium">返回</span>
+            </button>
+          </div>
+        )}
+        
+        {/* 文件夹图标预览 */}
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+          <div className="w-full aspect-square bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900 dark:to-blue-800 border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden relative flex items-center justify-center">
+            <Folder className="w-32 h-32 text-blue-500 dark:text-blue-300" />
+          </div>
+        </div>
+
+        {/* 文件夹信息 - 可滚动区域 */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">文件夹信息</h3>
+            <div className="space-y-2 text-sm">
+              <div>
+                <span className="text-gray-500 dark:text-gray-400">文件夹名:</span>
+                <p className="text-gray-900 dark:text-gray-100 break-all">{folderName}</p>
+              </div>
+              <div>
+                <span className="text-gray-500 dark:text-gray-400">包含图片:</span>
+                <p className="text-gray-900 dark:text-gray-100">{totalCount} 张（含子文件夹）</p>
+              </div>
+              <div>
+                <span className="text-gray-500 dark:text-gray-400">总大小:</span>
+                <p className="text-gray-900 dark:text-gray-100">{formatFileSize(totalSize)}</p>
+              </div>
+              <div>
+                <span className="text-gray-500 dark:text-gray-400">路径:</span>
+                <div className="flex items-start gap-2 mt-1">
+                  <p 
+                    className="flex-1 text-gray-900 dark:text-gray-100 text-xs break-all cursor-pointer hover:text-blue-500 transition-colors"
+                    onClick={() => copyPathToClipboard(fullPath)}
+                    title="点击复制路径"
+                  >
+                    {fullPath}
+                  </p>
+                  <button
+                    onClick={() => copyPathToClipboard(fullPath)}
+                    className={`flex-shrink-0 p-1 rounded transition-colors ${
+                      pathCopied
+                        ? 'text-green-500'
+                        : 'text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                    title="复制路径"
+                  >
+                    {pathCopied ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 操作按钮 - 仅桌面端显示 */}
+        {!isMobile && totalCount > 0 && (
+          <div className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-2 flex-shrink-0">
+            {/* 导出文件夹按钮 */}
+            <button
+              onClick={exportCurrentFolder}
+              disabled={isExportingFolder}
+              className="w-full flex flex-col items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center gap-2">
+                <FolderDown className="w-4 h-4" />
+                <span>
+                  {isExportingFolder 
+                    ? `打包中... ${folderExportProgress}%` 
+                    : `导出文件夹 (${totalCount} 张)`
+                  }
+                </span>
+              </div>
+              {isExportingFolder && (
+                <div className="w-full bg-gray-300 dark:bg-gray-600 rounded-full h-1.5 mt-1">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${folderExportProgress}%` }}
+                  />
+                </div>
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ========== 图片详情渲染 ==========
   return (
     <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col h-full">
       {/* 移动端返回按钮 */}
