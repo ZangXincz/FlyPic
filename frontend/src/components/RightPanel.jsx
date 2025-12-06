@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Copy, Download, Check, FolderDown, ArrowLeft } from 'lucide-react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
@@ -9,7 +9,7 @@ import JSZip from 'jszip';
 
 function RightPanel() {
   const { currentLibraryId } = useLibraryStore();
-  const { selectedImage, selectedImages, selectedFolder, images, setSelectedImage } = useImageStore();
+  const { selectedImage, selectedImages, selectedFolder, images, setSelectedImage, updateImage } = useImageStore();
   const { setMobileView, isResizingPanels, resizingSide } = useUIStore();
   const [isMobile, setIsMobile] = useState(false);
   const [imageUrl, setImageUrl] = useState(''); // 当前显示的图片URL
@@ -20,6 +20,9 @@ function RightPanel() {
   const [isExportingFolder, setIsExportingFolder] = useState(false);
   const [folderExportProgress, setFolderExportProgress] = useState(0);
   const [pathCopied, setPathCopied] = useState(false);
+  const [isEditingFilename, setIsEditingFilename] = useState(false);
+  const [editingFilename, setEditingFilename] = useState('');
+  const filenameInputRef = useRef(null);
 
   // 计算实际选中的图片数量（合并 selectedImage 和 selectedImages）
   const actualSelectedCount = (() => {
@@ -115,6 +118,64 @@ function RightPanel() {
       console.error('复制路径失败:', error);
       alert('复制失败，请重试');
     }
+  };
+
+  // 开始重命名
+  const handleStartRename = () => {
+    if (!selectedImage || isMultiSelect) return;
+    const nameWithoutExt = selectedImage.filename.substring(0, selectedImage.filename.lastIndexOf('.')) || selectedImage.filename;
+    setEditingFilename(nameWithoutExt);
+    setIsEditingFilename(true);
+    setTimeout(() => {
+      if (filenameInputRef.current) {
+        filenameInputRef.current.focus();
+        filenameInputRef.current.select();
+      }
+    }, 50);
+  };
+
+  // 完成重命名
+  const handleFinishRename = async () => {
+    if (!selectedImage || !editingFilename.trim()) {
+      setIsEditingFilename(false);
+      setEditingFilename('');
+      return;
+    }
+
+    const oldFilename = selectedImage.filename;
+    const ext = oldFilename.substring(oldFilename.lastIndexOf('.'));
+    const newFilename = editingFilename.trim() + ext;
+
+    if (newFilename === oldFilename) {
+      setIsEditingFilename(false);
+      setEditingFilename('');
+      return;
+    }
+
+    try {
+      const result = await fileAPI.rename(currentLibraryId, selectedImage.path, newFilename);
+      const newPath = result.data.newPath;
+      const actualNewName = result.data.newName;
+      
+      updateImage(selectedImage.path, {
+        path: newPath,
+        filename: actualNewName
+      });
+
+      console.log(`✅ 重命名成功: ${oldFilename} → ${actualNewName}`);
+    } catch (error) {
+      console.error('重命名失败:', error);
+      alert('重命名失败: ' + (error.message || '未知错误'));
+    } finally {
+      setIsEditingFilename(false);
+      setEditingFilename('');
+    }
+  };
+
+  // 取消重命名
+  const handleCancelRename = () => {
+    setIsEditingFilename(false);
+    setEditingFilename('');
   };
 
   // 检测移动端
@@ -935,7 +996,34 @@ function RightPanel() {
                 <>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">文件名:</span>
-                    <p className="text-gray-900 dark:text-gray-100 break-all">{selectedImage.filename}</p>
+                    {isEditingFilename ? (
+                      <input
+                        ref={filenameInputRef}
+                        type="text"
+                        value={editingFilename}
+                        onChange={(e) => setEditingFilename(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleFinishRename();
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            handleCancelRename();
+                          }
+                        }}
+                        onBlur={handleFinishRename}
+                        className="w-full text-gray-900 dark:text-gray-100 bg-transparent border-none outline-none focus:outline-none break-all underline decoration-2 decoration-blue-500 underline-offset-2"
+                        style={{ padding: 0, margin: 0 }}
+                      />
+                    ) : (
+                      <p 
+                        className="text-gray-900 dark:text-gray-100 break-all cursor-pointer hover:text-blue-500 transition-colors"
+                        onClick={handleStartRename}
+                        title="点击编辑文件名"
+                      >
+                        {selectedImage.filename}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">尺寸:</span>

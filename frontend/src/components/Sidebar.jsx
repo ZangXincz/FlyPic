@@ -52,8 +52,11 @@ function Sidebar() {
   const [dragOverFolder, setDragOverFolder] = useState(null); // 拖拽悬停的文件夹
   const [showFolderSelector, setShowFolderSelector] = useState(false); // 显示文件夹选择器
   const [moveFolderPath, setMoveFolderPath] = useState(null); // 待移动的文件夹路径
+  const [renamingFolder, setRenamingFolder] = useState(null); // 正在重命名的文件夹
+  const [editingFolderName, setEditingFolderName] = useState(''); // 编辑中的文件夹名
   const folderSearchDebounceRef = useRef(null);
   const librarySelectorRef = useRef(null);
+  const folderNameInputRef = useRef(null);
 
   // 文件夹搜索防抖（300ms）
   const handleFolderSearchChange = (value) => {
@@ -181,7 +184,7 @@ function Sidebar() {
     return parentPath || null;
   }, []);
 
-  // 监听Del键删除选中的文件夹
+  // 监听快捷键（Del删除、F2重命名、Ctrl+Z撤销）
   useEffect(() => {
     const handleKeyDown = async (e) => {
       // 忽略输入框中的快捷键
@@ -197,6 +200,40 @@ function Sidebar() {
         await handleDeleteFolder(selectedFolder);
       }
       
+      // F2 键 → 重命名当前选中的文件夹（只在没有选中图片时）
+      if (e.key === 'F2' && selectedFolder) {
+        const { selectedImages, selectedImage } = useImageStore.getState();
+        // 如果有选中的图片，让 ImageWaterfall 处理重命名
+        if (selectedImages.length > 0 || selectedImage) return;
+        
+        e.preventDefault();
+        // 找到对应的文件夹对象
+        const findFolderByPath = (foldersList, path) => {
+          for (const folder of foldersList) {
+            if (folder.path === path) return folder;
+            if (folder.children) {
+              const found = findFolderByPath(folder.children, path);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const folderObj = findFolderByPath(folders, selectedFolder);
+        if (folderObj) {
+          // 直接调用重命名逻辑，不依赖外部函数
+          setRenamingFolder(folderObj);
+          setEditingFolderName(folderObj.name);
+          setContextMenu({ isOpen: false, position: null, folder: null });
+          
+          setTimeout(() => {
+            if (folderNameInputRef.current) {
+              folderNameInputRef.current.focus();
+              folderNameInputRef.current.select();
+            }
+          }, 50);
+        }
+      }
+      
       // Ctrl+Z → 撤销（文件夹或图片）
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         // 如果有文件夹撤销历史，撤销文件夹
@@ -210,7 +247,7 @@ function Sidebar() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedFolder, undoHistory, findNextFolderAfterDelete]);
+  }, [selectedFolder, undoHistory, folders, findNextFolderAfterDelete]);
 
   // 文件夹删除功能（乐观更新，立即响应）
   const handleDeleteFolder = async (folderPath) => {
@@ -441,6 +478,87 @@ function Sidebar() {
     } finally {
       setMoveFolderPath(null);
     }
+  };
+
+  // 开始重命名文件夹
+  const handleStartRenameFolder = (folder) => {
+    if (!folder) return;
+    setRenamingFolder(folder);
+    setEditingFolderName(folder.name);
+    setContextMenu({ isOpen: false, position: null, folder: null });
+    
+    // 延迟聚焦，确保输入框已渲染
+    setTimeout(() => {
+      if (folderNameInputRef.current) {
+        folderNameInputRef.current.focus();
+        folderNameInputRef.current.select();
+      }
+    }, 50);
+  };
+
+  // 完成文件夹重命名
+  const handleFinishRenameFolder = async () => {
+    if (!renamingFolder || !editingFolderName.trim()) {
+      setRenamingFolder(null);
+      setEditingFolderName('');
+      return;
+    }
+
+    const oldName = renamingFolder.name;
+    const newName = editingFolderName.trim();
+
+    // 如果名称没有改变，直接退出
+    if (newName === oldName) {
+      setRenamingFolder(null);
+      setEditingFolderName('');
+      return;
+    }
+
+    const oldPath = renamingFolder.path;
+    const isRenamingCurrentFolder = selectedFolder === oldPath;
+
+    try {
+      // 调用重命名API
+      const result = await fileAPI.rename(currentLibraryId, oldPath, newName);
+      const newPath = result.data.newPath;
+      
+      console.log(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
+      
+      // 1. 立即清空图片列表（避免显示旧路径的无效图片）
+      const { setImages, setFolders, setSelectedFolder: setSelectedFolderGlobal } = useImageStore.getState();
+      setImages([]);
+      
+      // 2. 重新加载文件夹列表（关键：确保浏览器重新渲染）
+      const foldersRes = await imageAPI.getFolders(currentLibraryId);
+      console.log('📁 重命名后最新文件夹列表:', foldersRes.folders);
+      setFolders(foldersRes.folders);
+      
+      // 3. 如果重命名的是当前选中的文件夹，强制触发重新加载
+      if (isRenamingCurrentFolder) {
+        console.log(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
+        
+        // 先切换到 null，再切换到新路径，强制触发 useEffect
+        setSelectedFolderGlobal(null);
+        
+        // 使用 setTimeout 确保状态更新被 React 检测到
+        setTimeout(() => {
+          setSelectedFolderGlobal(newPath);
+          console.log('✅ 已切换到新文件夹, selectedFolder =', newPath);
+        }, 50);
+      }
+    } catch (error) {
+      console.error('文件夹重命名失败:', error);
+      alert('重命名失败: ' + (error.message || '未知错误'));
+    } finally {
+      setRenamingFolder(null);
+      setEditingFolderName('');
+    }
+  };
+
+  // 取消文件夹重命名
+  const handleCancelRenameFolder = () => {
+    setRenamingFolder(null);
+    setEditingFolderName('');
   };
 
   const handleAddLibrary = async () => {
@@ -872,9 +990,33 @@ function Sidebar() {
             <Folder className="w-4 h-4 mr-2 text-gray-500 flex-shrink-0" />
 
             {/* 文件夹名称 */}
-            <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1">
-              {folder.name}
-            </span>
+            {renamingFolder?.path === folder.path ? (
+              // 编辑模式 - 保持与显示模式相同的样式，只添加下划线提示
+              <input
+                ref={folderNameInputRef}
+                type="text"
+                value={editingFolderName}
+                onChange={(e) => setEditingFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleFinishRenameFolder();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    handleCancelRenameFolder();
+                  }
+                }}
+                onBlur={handleFinishRenameFolder}
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 text-sm text-gray-700 dark:text-gray-300 truncate bg-transparent border-none outline-none focus:outline-none underline decoration-2 decoration-blue-500 underline-offset-2"
+                style={{ padding: 0, margin: 0 }}
+              />
+            ) : (
+              // 显示模式
+              <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1">
+                {folder.name}
+              </span>
+            )}
 
             {/* 图片数量 */}
             <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{folder.imageCount}</span>
@@ -1171,6 +1313,7 @@ function Sidebar() {
         position={contextMenu.position}
         onClose={() => setContextMenu({ isOpen: false, position: null, folder: null })}
         options={contextMenu.folder ? [
+          menuItems.rename(() => handleStartRenameFolder(contextMenu.folder)),
           menuItems.move(() => handleMoveFolderClick(contextMenu.folder.path)),
           menuItems.delete(async () => {
             setContextMenu({ isOpen: false, position: null, folder: null });

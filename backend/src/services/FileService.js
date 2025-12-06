@@ -509,53 +509,64 @@ class FileService {
   /**
    * 重命名文件或文件夹
    * @param {string} libraryId - 素材库ID
-   * @param {string} oldPath - 旧路径（相对路径）
+   * @param {string} oldPath - 旧路径（相对路径，使用正斜杠）
    * @param {string} newName - 新名称（不含路径）
    */
   async renameItem(libraryId, oldPath, newName) {
     const db = this._getDatabase(libraryId);
     const libraryPath = db.libraryPath;
 
-    const fullOldPath = path.join(libraryPath, oldPath);
-    const directory = path.dirname(fullOldPath);
-    const fullNewPath = path.join(directory, newName);
+    // 归一化旧路径，确保使用正斜杠
+    const normalizedOldPath = oldPath.replace(/\\/g, '/');
+    const fullOldPath = path.join(libraryPath, normalizedOldPath);
 
-    // 检查文件是否存在
+    // 检查文件/文件夹是否存在
     if (!fs.existsSync(fullOldPath)) {
       throw new Error('文件不存在');
     }
 
-    // 检查新名称是否已存在
-    if (fs.existsSync(fullNewPath)) {
-      // 自动添加编号
-      const ext = path.extname(newName);
-      const basename = path.basename(newName, ext);
+    const stat = fs.lstatSync(fullOldPath);
+    const isDirectory = stat.isDirectory();
+
+    const directory = path.dirname(fullOldPath);
+    const initialNewPath = path.join(directory, newName);
+
+    // 如果目标已存在，则自动编号避免冲突
+    let finalFullNewPath = initialNewPath;
+    let finalNewName = newName;
+
+    if (fs.existsSync(finalFullNewPath)) {
+      const ext = isDirectory ? '' : path.extname(newName);
+      const basename = isDirectory ? newName : path.basename(newName, ext);
       let counter = 1;
-      let finalNewPath = fullNewPath;
-      
-      while (fs.existsSync(finalNewPath)) {
-        const numberedName = `${basename} (${counter})${ext}`;
-        finalNewPath = path.join(directory, numberedName);
+
+      while (fs.existsSync(finalFullNewPath)) {
+        const numberedName = isDirectory
+          ? `${basename} (${counter})`
+          : `${basename} (${counter})${ext}`;
+        finalFullNewPath = path.join(directory, numberedName);
+        finalNewName = numberedName;
         counter++;
       }
-      
-      fs.renameSync(fullOldPath, finalNewPath);
-      
-      // 更新数据库
-      const newRelativePath = path.relative(libraryPath, finalNewPath).replace(/\\/g, '/');
-      this._updatePathInDatabase(db, oldPath, newRelativePath);
-      
-      return { newPath: newRelativePath, newName: path.basename(finalNewPath) };
     }
 
-    // 执行重命名
-    fs.renameSync(fullOldPath, fullNewPath);
+    // 执行重命名（文件或文件夹）
+    fs.renameSync(fullOldPath, finalFullNewPath);
 
-    // 更新数据库
-    const newRelativePath = path.relative(libraryPath, fullNewPath).replace(/\\/g, '/');
-    this._updatePathInDatabase(db, oldPath, newRelativePath);
+    // 计算新的相对路径
+    const newRelativePath = path
+      .relative(libraryPath, finalFullNewPath)
+      .replace(/\\/g, '/');
 
-    return { newPath: newRelativePath, newName };
+    if (isDirectory) {
+      // 文件夹：更新 folders 表与 images 表中所有相关记录
+      this._updateFolderPathInDatabase(db, normalizedOldPath, newRelativePath);
+    } else {
+      // 单个文件：仅更新 images 表中的一条记录
+      this._updatePathInDatabase(db, normalizedOldPath, newRelativePath);
+    }
+
+    return { newPath: newRelativePath, newName: finalNewName };
   }
 
   /**
@@ -795,13 +806,15 @@ class FileService {
   }
 
   /**
-   * 更新数据库中的路径（私有方法）
+   * 更新数据库中的路径（仅用于单个文件）
+   * @private
    */
   _updatePathInDatabase(db, oldPath, newPath) {
     const image = db.getImageByPath(oldPath);
-    if (!image) return;
+    if (!image) {
+      return;
+    }
 
-    // 更新路径和文件名
     const newFilename = path.basename(newPath);
     const newFolder = path.dirname(newPath);
 
@@ -818,6 +831,68 @@ class FileService {
       oldPath
     );
 
+    db.updateLastModified();
+  }
+
+  /**
+   * 更新数据库中的文件夹路径（folders + images）
+   * @private
+   */
+  _updateFolderPathInDatabase(db, oldFolderPath, newFolderPath) {
+    const normalizedOld = oldFolderPath.replace(/\\/g, '/');
+    const normalizedNew = newFolderPath.replace(/\\/g, '/');
+
+    const len = normalizedOld.length + 1; // 用于去掉前缀
+
+    // 1. 更新根文件夹记录（path / name，parent_path 保持不变）
+    const rootFolder = db.getFolderByPath(normalizedOld);
+    const parentPath = rootFolder ? rootFolder.parent_path : path.dirname(normalizedOld);
+
+    const updateRootFolderStmt = db.db.prepare(`
+      UPDATE folders
+      SET path = ?, parent_path = ?, name = ?
+      WHERE path = ?
+    `);
+    updateRootFolderStmt.run(
+      normalizedNew,
+      parentPath || null,
+      path.basename(normalizedNew),
+      normalizedOld
+    );
+
+    // 2. 更新子文件夹记录（保持层级结构）
+    const updateChildFoldersStmt = db.db.prepare(`
+      UPDATE folders
+      SET path = ? || substr(path, ?),
+          parent_path = ? || substr(parent_path, ?)
+      WHERE path LIKE ?
+    `);
+    updateChildFoldersStmt.run(
+      normalizedNew,
+      len,
+      normalizedNew,
+      len,
+      `${normalizedOld}/%`
+    );
+
+    // 3. 更新 images 表中所有属于该文件夹及子文件夹的图片路径和 folder 字段
+    const updateImagesStmt = db.db.prepare(`
+      UPDATE images
+      SET path = ? || substr(path, ?),
+          folder = ? || substr(folder, ?)
+      WHERE folder = ? OR folder LIKE ?
+    `);
+    updateImagesStmt.run(
+      normalizedNew,
+      len,
+      normalizedNew,
+      len,
+      normalizedOld,
+      `${normalizedOld}/%`
+    );
+
+    // 4. 重新计算所有文件夹的图片数量
+    db.updateAllFolderCounts();
     db.updateLastModified();
   }
 

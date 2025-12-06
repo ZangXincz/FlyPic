@@ -59,7 +59,8 @@ function ImageWaterfall() {
   const { 
     images, selectedImage, setSelectedImage, selectedImages, setSelectedImages, 
     toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, setSelectedFolder,
-    searchKeywords, filters, appendImages, setImageLoadingState, setImages, folders, setFolders
+    searchKeywords, filters, appendImages, setImageLoadingState, setImages, folders, setFolders,
+    renamingImage, setRenamingImage, updateImage
   } = useImageStore();
   
   const { thumbnailHeight, isResizingPanels } = useUIStore();
@@ -120,6 +121,8 @@ function ImageWaterfall() {
   const [undoHistory, setUndoHistory] = useState([]); // 撤销历史栈，支持多次撤销
   const [showFolderSelector, setShowFolderSelector] = useState(false); // 显示文件夹选择器
   const [moveItems, setMoveItems] = useState([]); // 待移动的项
+  const [editingFilename, setEditingFilename] = useState(''); // 编辑中的文件名
+  const editInputRef = useRef(null); // 编辑输入框引用
 
   // 监听文件夹切换，切换时关闭Toast
   useEffect(() => {
@@ -127,7 +130,7 @@ function ImageWaterfall() {
     setUndoToast({ isVisible: false, message: '', count: 0 });
   }, [selectedFolder]);
 
-  // 全局快捷键监听 - Del 键删除, Ctrl+Z 撤销
+  // 全局快捷键监听 - Del 键删除, Ctrl+Z 撤销, F2/Enter 重命名
   useEffect(() => {
     const handleGlobalKeyDown = async (e) => {
       // 忽略输入框中的快捷键
@@ -139,6 +142,13 @@ function ImageWaterfall() {
         if (undoHistory.length > 0) {
           await handleUndo();
         }
+        return;
+      }
+      
+      // F2 或 Enter → 重命名（仅单选时）
+      if ((e.key === 'F2' || e.key === 'Enter') && selectedImage && selectedImages.length === 0) {
+        e.preventDefault();
+        handleStartRename(selectedImage);
         return;
       }
       
@@ -687,16 +697,94 @@ function ImageWaterfall() {
     }
   }, [currentLibraryId, moveItems, images, setImages, clearSelection, setFolders]);
 
+  // 开始重命名
+  const handleStartRename = useCallback((image) => {
+    if (!image) return;
+    setRenamingImage(image);
+    // 获取不带扩展名的文件名
+    const nameWithoutExt = image.filename.substring(0, image.filename.lastIndexOf('.')) || image.filename;
+    setEditingFilename(nameWithoutExt);
+    // 延迟聚焦，确保输入框已渲染
+    setTimeout(() => {
+      if (editInputRef.current) {
+        editInputRef.current.focus();
+        editInputRef.current.select();
+      }
+    }, 50);
+  }, [setRenamingImage]);
+
+  // 完成重命名
+  const handleFinishRename = useCallback(async () => {
+    if (!renamingImage || !editingFilename.trim()) {
+      setRenamingImage(null);
+      setEditingFilename('');
+      return;
+    }
+
+    const oldFilename = renamingImage.filename;
+    const ext = oldFilename.substring(oldFilename.lastIndexOf('.'));
+    const newFilename = editingFilename.trim() + ext;
+
+    // 如果文件名没有改变，直接退出
+    if (newFilename === oldFilename) {
+      setRenamingImage(null);
+      setEditingFilename('');
+      return;
+    }
+
+    try {
+      // 调用重命名API
+      const result = await fileAPI.rename(currentLibraryId, renamingImage.path, newFilename);
+      
+      // 更新图片信息
+      const newPath = result.data.newPath;
+      const actualNewName = result.data.newName;
+      updateImage(renamingImage.path, {
+        path: newPath,
+        filename: actualNewName
+      });
+
+      console.log(`✅ 重命名成功: ${oldFilename} → ${actualNewName}`);
+    } catch (error) {
+      console.error('重命名失败:', error);
+      alert('重命名失败: ' + (error.message || '未知错误'));
+    } finally {
+      setRenamingImage(null);
+      setEditingFilename('');
+    }
+  }, [renamingImage, editingFilename, currentLibraryId, updateImage]);
+
+  // 取消重命名
+  const handleCancelRename = useCallback(() => {
+    setRenamingImage(null);
+    setEditingFilename('');
+  }, []);
+
   // 准备右键菜单选项
   const getContextMenuOptions = useCallback((image) => {
-    return [
+    const isMultiSelection = selectedImages.length > 0;
+    const menuOptions = [];
+    
+    // 只在单选时显示重命名选项
+    if (!isMultiSelection) {
+      menuOptions.push(
+        menuItems.rename(() => {
+          setContextMenu({ isOpen: false, position: null, image: null });
+          handleStartRename(image);
+        })
+      );
+    }
+    
+    menuOptions.push(
       menuItems.move(handleMoveClick),
       menuItems.delete(async () => {
         setContextMenu({ isOpen: false, position: null, image: null });
         await handleQuickDelete();
       })
-    ];
-  }, [selectedImages, selectedImage, handleMoveClick]);
+    );
+    
+    return menuOptions;
+  }, [selectedImages, selectedImage, handleMoveClick, handleStartRename]);
 
   // 渲染单个图片单元格
   const renderImageCell = (image, flatIndex) => {
@@ -780,16 +868,55 @@ function ImageWaterfall() {
           
           <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all pointer-events-none" />
         </div>
-        <div className="mt-1 px-1">
-          <p 
-            className="text-xs truncate text-center transition-colors"
-            style={{ 
-              color: isSelected ? '#3b82f6' : '#909090',
-              fontWeight: isSelected ? '600' : '400'
-            }}
-          >
-            {image.filename}
-          </p>
+        <div className="mt-1 px-1 h-4 flex items-center">
+          {renamingImage?.id === image.id ? (
+            // 编辑模式 - 保持与显示模式相同的样式，只添加下划线提示
+            <input
+              ref={editInputRef}
+              type="text"
+              value={editingFilename}
+              onChange={(e) => setEditingFilename(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleFinishRename();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  handleCancelRename();
+                }
+              }}
+              onBlur={handleFinishRename}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full text-xs text-center bg-transparent border-none outline-none focus:outline-none underline decoration-2 decoration-blue-500 underline-offset-2 truncate leading-none"
+              style={{ 
+                color: isSelected ? '#3b82f6' : '#909090',
+                fontWeight: isSelected ? '600' : '400',
+                padding: 0,
+                margin: 0,
+                height: '1rem'
+              }}
+            />
+          ) : (
+            // 显示模式
+            <p 
+              className="text-xs truncate text-center transition-colors cursor-text m-0 leading-none"
+              style={{ 
+                color: isSelected ? '#3b82f6' : '#909090',
+                fontWeight: isSelected ? '600' : '400',
+                height: '1rem'
+              }}
+              onDoubleClick={(e) => {
+                // 只在单选时允许双击重命名
+                if (selectedImages.length === 0) {
+                  e.stopPropagation();
+                  handleStartRename(image);
+                }
+              }}
+              title={selectedImages.length === 0 ? "双击重命名" : ""}
+            >
+              {image.filename}
+            </p>
+          )}
         </div>
       </div>
     );

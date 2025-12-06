@@ -36,6 +36,9 @@ export const useImageStore = create((set, get) => ({
     hasMore: false,
   },
   
+  // 重命名状态
+  renamingImage: null, // 正在重命名的图片
+  
   // 图片操作
   setImages: (images) => set({ images }),
   
@@ -94,5 +97,18 @@ export const useImageStore = create((set, get) => ({
   // 加载状态
   setImageLoadingState: (state) => set((prev) => ({
     imageLoadingState: { ...prev.imageLoadingState, ...state }
+  })),
+  
+  // 重命名操作
+  setRenamingImage: (image) => set({ renamingImage: image }),
+  
+  // 更新图片信息（重命名后）
+  updateImage: (oldPath, newData) => set((state) => ({
+    images: state.images.map(img => 
+      img.path === oldPath ? { ...img, ...newData } : img
+    ),
+    selectedImage: state.selectedImage?.path === oldPath 
+      ? { ...state.selectedImage, ...newData } 
+      : state.selectedImage
   }))
 }));
