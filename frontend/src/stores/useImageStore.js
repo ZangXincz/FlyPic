@@ -22,8 +22,9 @@ export const useImageStore = create((set, get) => ({
   searchKeywords: '',
   filters: {
     formats: [],
-    sizes: [],        // 文件大小范围筛选
-    orientation: '',  // 横竖图筛选: 'horizontal' | 'vertical' | ''
+    sizes: [],           // 文件大小范围筛选
+    orientations: [],    // 图片方向筛选（多选）: ['horizontal', 'vertical', 'square']
+    ratings: [],         // 评分筛选（多选）: [0, 1, 2, 3, 4, 5]
   },
   
   // 原始图片列表（用于生成筛选选项，不受筛选影响）
@@ -89,7 +90,8 @@ export const useImageStore = create((set, get) => ({
     filters: {
       formats: [],
       sizes: [],
-      orientation: ''
+      orientations: [],
+      ratings: []
     }
   }),
   

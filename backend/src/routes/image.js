@@ -167,4 +167,30 @@ router.get('/original/:libraryId/*', (req, res) => {
   }
 });
 
+/**
+ * 更新图片评分
+ * PUT /api/image/rating
+ * Body: { libraryId, paths: [string], rating: number }
+ */
+router.put('/rating', asyncHandler(async (req, res) => {
+  const { libraryId, paths, rating } = req.body;
+  
+  if (!libraryId || !paths || !Array.isArray(paths) || paths.length === 0) {
+    return res.status(400).json({ 
+      success: false, 
+      message: '缺少必要参数: libraryId, paths' 
+    });
+  }
+  
+  if (typeof rating !== 'number' || rating < 0 || rating > 5) {
+    return res.status(400).json({ 
+      success: false, 
+      message: '评分必须是 0-5 之间的整数' 
+    });
+  }
+  
+  const result = await imageService.updateRating(libraryId, paths, rating);
+  res.json({ success: true, data: result });
+}));
+
 module.exports = router;

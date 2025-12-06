@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Sun, Moon, Search, Filter, Sliders, RefreshCw } from 'lucide-react';
+import { Sun, Moon, Search, Filter, Sliders, RefreshCw, Star } from 'lucide-react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
@@ -23,7 +23,8 @@ function Header() {
   // 从全局 store 获取筛选状态
   const selectedFormats = filters.formats || [];
   const selectedSizes = filters.sizes || [];
-  const selectedOrientation = filters.orientation || '';
+  const selectedOrientations = filters.orientations || [];
+  const selectedRatings = filters.ratings || [];
 
   // 检测移动端
   useEffect(() => {
@@ -172,13 +173,15 @@ function Header() {
   // 分析原始图片列表，生成可选项（基于 originalImages，不受筛选影响）
   const filterOptions = useMemo(() => {
     if (originalImages.length === 0) {
-      return { formats: [], sizes: [], hasHorizontal: false, hasVertical: false };
+      return { formats: [], sizes: [], hasHorizontal: false, hasVertical: false, hasSquare: false, ratings: [] };
     }
 
     const formats = new Set();
     const sizes = [];
+    const ratings = new Set();
     let hasHorizontal = false;
     let hasVertical = false;
+    let hasSquare = false;
 
     originalImages.forEach(img => {
       // 格式
@@ -187,9 +190,20 @@ function Header() {
       }
       // 文件大小
       sizes.push(img.size / 1024);
-      // 横竖图
-      if (img.width > img.height) hasHorizontal = true;
-      if (img.height > img.width) hasVertical = true;
+      
+      // 方向检测
+      const aspectRatio = img.width / img.height;
+      if (aspectRatio > 1.05) {
+        hasHorizontal = true;  // 横图
+      } else if (aspectRatio < 0.95) {
+        hasVertical = true;    // 竖图
+      } else {
+        hasSquare = true;      // 方图（宽高比在0.95-1.05之间）
+      }
+      
+      // 评分统计
+      const rating = img.rating || 0;
+      ratings.add(rating);
     });
 
     // 计算文件大小范围
@@ -199,7 +213,9 @@ function Header() {
       formats: Array.from(formats).sort(),
       sizes: sizeRanges,
       hasHorizontal,
-      hasVertical
+      hasVertical,
+      hasSquare,
+      ratings: Array.from(ratings).sort((a, b) => b - a)  // 评分降序排列
     };
   }, [originalImages]);
 
@@ -219,13 +235,22 @@ function Header() {
   };
 
   const toggleOrientation = (orientation) => {
-    const newOrientation = selectedOrientation === orientation ? '' : orientation;
-    setFilters({ orientation: newOrientation });
+    const newOrientations = selectedOrientations.includes(orientation)
+      ? selectedOrientations.filter(o => o !== orientation)
+      : [...selectedOrientations, orientation];
+    setFilters({ orientations: newOrientations });
+  };
+
+  const toggleRating = (rating) => {
+    const newRatings = selectedRatings.includes(rating)
+      ? selectedRatings.filter(r => r !== rating)
+      : [...selectedRatings, rating];
+    setFilters({ ratings: newRatings });
   };
 
   // 清除筛选
   const clearFilters = () => {
-    setFilters({ formats: [], sizes: [], orientation: '' });
+    setFilters({ formats: [], sizes: [], orientations: [], ratings: [] });
   };
 
   const handleThumbnailHeightChange = async (height) => {
@@ -257,11 +282,14 @@ function Header() {
   const availableSizes = filterOptions.sizes.map(size => ({ label: size }));
   const availableOrientations = [
     { value: 'horizontal', label: '横图' },
-    { value: 'vertical', label: '竖图' }
+    { value: 'vertical', label: '竖图' },
+    { value: 'square', label: '方图' }
   ].filter(o => 
     (o.value === 'horizontal' && filterOptions.hasHorizontal) ||
-    (o.value === 'vertical' && filterOptions.hasVertical)
+    (o.value === 'vertical' && filterOptions.hasVertical) ||
+    (o.value === 'square' && filterOptions.hasSquare)
   );
+  const availableRatings = filterOptions.ratings;
 
   // 移动端布局
   if (isMobile) {
@@ -320,13 +348,13 @@ function Header() {
               <button
                 onClick={() => setShowFilters(!showFilters)}
                 className={`p-2 border rounded-lg ${
-                  selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                  selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientations.length > 0 || selectedRatings.length > 0
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/20'
                     : 'border-gray-300 dark:border-gray-600'
                 }`}
               >
                 <Filter className={`w-5 h-5 ${
-                  selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+                  selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientations.length > 0 || selectedRatings.length > 0
                     ? 'text-blue-600 dark:text-blue-300'
                     : 'text-gray-600 dark:text-gray-400'
                 }`} />
@@ -412,7 +440,7 @@ function Header() {
             </div>
             
             {/* 方向筛选 */}
-            <div>
+            <div className="mb-3">
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">方向</div>
               <div className="flex flex-wrap gap-2">
                 {availableOrientations.map(orientation => (
@@ -420,7 +448,7 @@ function Header() {
                     key={orientation.value}
                     onClick={() => toggleOrientation(orientation.value)}
                     className={`px-3 py-1 text-xs rounded-full ${
-                      selectedOrientation === orientation.value
+                      selectedOrientations.includes(orientation.value)
                         ? 'bg-blue-500 text-white'
                         : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
                     }`}
@@ -430,6 +458,36 @@ function Header() {
                 ))}
               </div>
             </div>
+            
+            {/* 评分筛选 */}
+            {availableRatings.length > 0 && (
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">评分</div>
+                <div className="flex flex-wrap gap-2">
+                  {[5, 4, 3, 2, 1, 0].filter(r => availableRatings.includes(r)).map(rating => (
+                    <button
+                      key={rating}
+                      onClick={() => toggleRating(rating)}
+                      className={`px-2 py-1 text-xs rounded-full flex items-center gap-1 ${
+                        selectedRatings.includes(rating)
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                      }`}
+                    >
+                      {rating > 0 ? (
+                        <>
+                          {[...Array(rating)].map((_, i) => (
+                            <Star key={i} size={12} className="fill-current" />
+                          ))}
+                        </>
+                      ) : (
+                        <span>未评分</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </header>
@@ -460,22 +518,22 @@ function Header() {
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`relative p-2 border rounded-lg transition-colors ${
-              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientations.length > 0 || selectedRatings.length > 0
                 ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-500/20 hover:bg-blue-100 dark:hover:bg-blue-500/30'
                 : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
             title={
-              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientations.length > 0 || selectedRatings.length > 0
                 ? '筛选（已启用）'
                 : '筛选'
             }
           >
             <Filter className={`w-5 h-5 ${
-              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation
+              selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientations.length > 0 || selectedRatings.length > 0
                 ? 'text-blue-600 dark:text-blue-300'
                 : 'text-gray-600 dark:text-gray-400'
             }`} />
-            {(selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientation) && (
+            {(selectedFormats.length > 0 || selectedSizes.length > 0 || selectedOrientations.length > 0 || selectedRatings.length > 0) && (
               <span 
                 className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full" 
                 style={{ backgroundColor: '#3b82f6' }}
@@ -534,8 +592,8 @@ function Header() {
               </button>
             </div>
 
-            {/* 三列布局 */}
-            <div className="grid grid-cols-3 gap-4">
+            {/* 四列布局 */}
+            <div className="grid grid-cols-4 gap-4">
               {/* 格式筛选 */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">格式</label>
@@ -584,36 +642,58 @@ function Header() {
                 </div>
               </div>
 
-              {/* 横竖图筛选 */}
+              {/* 图片方向筛选 */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">图片方向</label>
                 <div className="flex flex-col gap-1.5">
-                  {filterOptions.hasHorizontal && (
-                    <button
-                      onClick={() => toggleOrientation('horizontal')}
-                      className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
-                        selectedOrientation === 'horizontal'
-                          ? 'bg-blue-500 text-white'
-                          : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
-                      }`}
-                    >
-                      横图
-                    </button>
-                  )}
-                  {filterOptions.hasVertical && (
-                    <button
-                      onClick={() => toggleOrientation('vertical')}
-                      className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
-                        selectedOrientation === 'vertical'
-                          ? 'bg-blue-500 text-white'
-                          : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
-                      }`}
-                    >
-                      竖图
-                    </button>
-                  )}
-                  {!filterOptions.hasHorizontal && !filterOptions.hasVertical && (
+                  {availableOrientations.length > 0 ? (
+                    availableOrientations.map(orientation => (
+                      <button
+                        key={orientation.value}
+                        onClick={() => toggleOrientation(orientation.value)}
+                        className={`px-3 py-1.5 text-xs rounded transition-colors text-left ${
+                          selectedOrientations.includes(orientation.value)
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                        }`}
+                      >
+                        {orientation.label}
+                      </button>
+                    ))
+                  ) : (
                     <span className="text-xs text-gray-400 py-2">暂无方向数据</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 评分筛选 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">评分</label>
+                <div className="flex flex-col gap-1.5">
+                  {availableRatings.length > 0 ? (
+                    [5, 4, 3, 2, 1, 0].filter(r => availableRatings.includes(r)).map(rating => (
+                      <button
+                        key={rating}
+                        onClick={() => toggleRating(rating)}
+                        className={`px-3 py-1.5 text-xs rounded transition-colors text-left flex items-center gap-1.5 ${
+                          selectedRatings.includes(rating)
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'
+                        }`}
+                      >
+                        {rating > 0 ? (
+                          <>
+                            {[...Array(rating)].map((_, i) => (
+                              <Star key={i} size={14} className="fill-current" />
+                            ))}
+                          </>
+                        ) : (
+                          <span>未评分</span>
+                        )}
+                      </button>
+                    ))
+                  ) : (
+                    <span className="text-xs text-gray-400 py-2">暂无评分数据</span>
                   )}
                 </div>
               </div>

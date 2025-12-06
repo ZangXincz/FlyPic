@@ -65,3 +65,14 @@ export function getOriginalUrl(libraryId, path) {
 export async function openInExplorer(libraryId, path) {
   return api.post(`/image/${libraryId}/open-file`, { path });
 }
+
+/**
+ * 更新图片评分（支持批量）
+ */
+export async function updateRating(libraryId, paths, rating) {
+  return api.put('/image/rating', {
+    libraryId,
+    paths: Array.isArray(paths) ? paths : [paths],
+    rating
+  });
+}

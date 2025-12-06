@@ -7,10 +7,11 @@ import { useScanStore } from '../stores/useScanStore';
 import { useClipboardStore } from '../stores/useClipboardStore';
 import { imageAPI, fileAPI } from '../api';
 import JSZip from 'jszip';
+import RatingStars from './RatingStars';
 
 function RightPanel() {
   const { currentLibraryId } = useLibraryStore();
-  const { selectedImage, selectedImages, selectedFolder, selectedFolderItem, images, setSelectedImage, updateImage } = useImageStore();
+  const { selectedImage, selectedImages, selectedFolder, selectedFolderItem, images, setSelectedImage, setSelectedImages, updateImage } = useImageStore();
   const { setMobileView, isResizingPanels, resizingSide } = useUIStore();
   const { copyToClipboard } = useClipboardStore();
   const [isMobile, setIsMobile] = useState(false);
@@ -25,6 +26,7 @@ function RightPanel() {
   const [isEditingFilename, setIsEditingFilename] = useState(false);
   const [editingFilename, setEditingFilename] = useState('');
   const filenameInputRef = useRef(null);
+  const [isUpdatingRating, setIsUpdatingRating] = useState(false);
 
   // 计算实际选中的图片数量（合并 selectedImage 和 selectedImages）
   const actualSelectedCount = (() => {
@@ -178,6 +180,44 @@ function RightPanel() {
   const handleCancelRename = () => {
     setIsEditingFilename(false);
     setEditingFilename('');
+  };
+
+  // 更新评分（支持单选和多选）
+  const handleRatingChange = async (newRating) => {
+    const imagesToRate = getImagesToProcess();
+    if (imagesToRate.length === 0) return;
+
+    setIsUpdatingRating(true);
+    try {
+      const paths = imagesToRate.map(img => img.path);
+      await imageAPI.updateRating(currentLibraryId, paths, newRating);
+      
+      // 更新本地状态 - images 数组
+      imagesToRate.forEach(img => {
+        updateImage(img.path, { rating: newRating });
+      });
+      
+      // 关键修复：同时更新选中状态，确保详情面板立即显示最新评分
+      if (selectedImage && paths.includes(selectedImage.path)) {
+        setSelectedImage({ ...selectedImage, rating: newRating });
+      }
+      if (selectedImages.length > 0) {
+        const updatedSelectedImages = selectedImages.map(img => {
+          if (paths.includes(img.path)) {
+            return { ...img, rating: newRating };
+          }
+          return img;
+        });
+        setSelectedImages(updatedSelectedImages);
+      }
+      
+      console.log(`✅ 已更新 ${paths.length} 张图片的评分为 ${newRating} 星`);
+    } catch (error) {
+      console.error('更新评分失败:', error);
+      alert('更新评分失败: ' + (error.message || '未知错误'));
+    } finally {
+      setIsUpdatingRating(false);
+    }
   };
 
   // 检测移动端
@@ -1080,6 +1120,35 @@ function RightPanel() {
                       <p className="text-gray-900 dark:text-gray-100">{stats.count} 张图片</p>
                     </div>
                     <div>
+                      <span className="text-gray-500 dark:text-gray-400">评分:</span>
+                      <div className="mt-1">
+                        <RatingStars
+                          rating={(() => {
+                            const images = getImagesToProcess();
+                            const ratings = images.map(img => img.rating || 0);
+                            const uniqueRatings = [...new Set(ratings)];
+                            // 如果所有图片评分相同，显示该评分；否则显示 0
+                            return uniqueRatings.length === 1 ? uniqueRatings[0] : 0;
+                          })()}
+                          onChange={handleRatingChange}
+                          disabled={isUpdatingRating}
+                        />
+                      </div>
+                      {(() => {
+                        const images = getImagesToProcess();
+                        const ratings = images.map(img => img.rating || 0);
+                        const uniqueRatings = [...new Set(ratings)];
+                        if (uniqueRatings.length > 1) {
+                          return (
+                            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                              已选择的图片评分不一致，点击星星可批量设置评分
+                            </p>
+                          );
+                        }
+                        return null;
+                      })()}
+                    </div>
+                    <div>
                       <span className="text-gray-500 dark:text-gray-400">尺寸范围:</span>
                       <p className="text-gray-900 dark:text-gray-100">
                         {stats.dimensionRange.minWidth === stats.dimensionRange.maxWidth && 
@@ -1166,6 +1235,16 @@ function RightPanel() {
                         {selectedImage.filename}
                       </p>
                     )}
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">评分:</span>
+                    <div className="mt-1">
+                      <RatingStars
+                        rating={selectedImage.rating || 0}
+                        onChange={handleRatingChange}
+                        disabled={isUpdatingRating}
+                      />
+                    </div>
                   </div>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">尺寸:</span>

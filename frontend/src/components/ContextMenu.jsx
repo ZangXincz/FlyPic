@@ -138,7 +138,7 @@ export const menuItems = {
   }),
   move: (action) => ({
     icon: <Move size={16} />,
-    label: '移动到...',
+    label: '移动到',
     action
   }),
   copy: (action) => ({

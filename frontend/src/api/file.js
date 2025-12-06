@@ -105,5 +105,37 @@ export const fileAPI = {
       folderPath
     });
     return response.data;
+  },
+
+  /**
+   * 上传文件到指定文件夹
+   * @param {string} libraryId - 素材库ID
+   * @param {string} targetFolder - 目标文件夹路径（可选，默认根目录）
+   * @param {File[]} files - 待上传的文件数组
+   * @param {Function} onProgress - 进度回调函数 (progressEvent) => {}
+   * @param {string} conflictAction - 冲突处理方式: 'skip'|'replace'|'rename'
+   */
+  async upload(libraryId, targetFolder, files, onProgress, conflictAction) {
+    const formData = new FormData();
+    formData.append('libraryId', libraryId);
+    if (targetFolder) {
+      formData.append('targetFolder', targetFolder);
+    }
+    if (conflictAction) {
+      formData.append('conflictAction', conflictAction);
+    }
+    
+    // 添加所有文件
+    for (const file of files) {
+      formData.append('files', file);
+    }
+
+    const response = await axios.post(`${API_BASE}/api/upload`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      onUploadProgress: onProgress
+    });
+    return response.data;
   }
 };

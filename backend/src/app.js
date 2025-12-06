@@ -57,7 +57,9 @@ function createApp(dependencies) {
 
   const fileService = new FileService(dbPool, configManager);
 
-  // 将服务注入到 app 中，供路由使用
+  // 将服务和依赖注入到 app 中，供路由使用
+  app.set('configManager', configManager);
+  app.set('dbPool', dbPool);
   app.set('libraryService', libraryService);
   app.set('imageService', imageService);
   app.set('scanService', scanService);
@@ -68,11 +70,13 @@ function createApp(dependencies) {
   const imageRouter = require('./routes/image');
   const scanRouter = require('./routes/scan');
   const fileRouter = require('./routes/file');
+  const uploadRouter = require('./routes/upload');
 
   app.use('/api/library', libraryRouter);
   app.use('/api/image', imageRouter);
   app.use('/api/scan', scanRouter);
   app.use('/api/file', fileRouter);
+  app.use('/api/upload', uploadRouter);
 
   // 健康检查
   app.get('/api/health', (req, res) => {
