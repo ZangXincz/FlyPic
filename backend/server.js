@@ -125,8 +125,11 @@ server.listen(PORT, () => {
         for (const library of currentConfig.libraries) {
           try {
             const result = await fileService.cleanExpiredTempFiles(library.id);
-            if (result.cleaned > 0) {
-              console.log(`🧹 清理了 ${result.cleaned} 个过期临时文件`);
+            if (result.cleaned > 0 || result.thumbnailsCleaned > 0) {
+              const parts = [];
+              if (result.cleaned > 0) parts.push(`${result.cleaned} 个过期文件`);
+              if (result.thumbnailsCleaned > 0) parts.push(`${result.thumbnailsCleaned} 个缩略图`);
+              console.log(`🧹 已清理: ${parts.join('、')}`);
             }
           } catch (error) {
             // 忽略错误

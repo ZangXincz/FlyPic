@@ -172,13 +172,14 @@ class FileService {
     const backupDir = path.join(libraryPath, TEMP_BACKUP_DIR);
     
     if (!fs.existsSync(backupDir)) {
-      return { cleaned: 0, failed: 0 };
+      return { cleaned: 0, failed: 0, thumbnailsCleaned: 0 };
     }
 
     const FIVE_MINUTES = 5 * 60 * 1000; // 5分钟
     const now = Date.now();
     let cleaned = 0;
     let failed = 0;
+    let thumbnailsCleaned = 0; // 统计清理的缩略图数量
 
     // 递归扫描备份目录
     const scanDir = async (dir) => {
@@ -201,6 +202,26 @@ class FileService {
             // 超过5分钟，移入系统回收站
             if (age > FIVE_MINUTES) {
               try {
+                // 1. 清理缩略图（在移入回收站前）
+                if (meta.imageRecords) {
+                  const records = Array.isArray(meta.imageRecords) ? meta.imageRecords : [meta.imageRecords];
+                  for (const record of records) {
+                    if (record.thumbnail_path) {
+                      try {
+                        const thumbnailFullPath = path.join(libraryPath, record.thumbnail_path);
+                        if (fs.existsSync(thumbnailFullPath)) {
+                          fs.unlinkSync(thumbnailFullPath);
+                          thumbnailsCleaned++;
+                          console.log(`🧹 已清理缩略图: ${record.thumbnail_path}`);
+                        }
+                      } catch (thumbError) {
+                        console.warn(`清理缩略图失败 ${record.thumbnail_path}:`, thumbError.message);
+                      }
+                    }
+                  }
+                }
+                
+                // 2. 移入系统回收站
                 // trash v8 是 ESM 模块，需要使用动态 import
                 const { default: trash } = await import('trash');
                 await trash([fullPath]);
@@ -297,7 +318,7 @@ class FileService {
       console.warn('[cleanExpiredTempFiles] 清理空文件夹时出错:', error.message);
     }
 
-    return { cleaned, failed };
+    return { cleaned, failed, thumbnailsCleaned };
   }
 
   /**
