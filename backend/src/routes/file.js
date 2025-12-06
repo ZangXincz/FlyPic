@@ -89,19 +89,19 @@ router.post('/move', asyncHandler(async (req, res) => {
 /**
  * 复制文件或文件夹
  * POST /api/file/copy
- * Body: { libraryId, items: [{type, path}], targetFolder }
+ * Body: { libraryId, items: [{type, path}], targetFolder, conflictAction?: 'skip'|'replace'|'rename' }
  */
 router.post('/copy', asyncHandler(async (req, res) => {
-  const { libraryId, items, targetFolder } = req.body;
+  const { libraryId, items, targetFolder, conflictAction } = req.body;
 
-  if (!libraryId || !items || !Array.isArray(items) || !targetFolder) {
+  if (!libraryId || !items || !Array.isArray(items) || targetFolder === undefined) {
     return res.status(400).json({
       success: false,
       error: '缺少必要参数'
     });
   }
 
-  const results = await fileService.copyItems(libraryId, items, targetFolder);
+  const results = await fileService.copyItems(libraryId, items, targetFolder, conflictAction);
   
   res.json({
     success: true,

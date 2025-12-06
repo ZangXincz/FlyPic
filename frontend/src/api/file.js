@@ -54,12 +54,14 @@ export const fileAPI = {
    * @param {string} libraryId - 素材库ID
    * @param {Array} items - 待复制项
    * @param {string} targetFolder - 目标文件夹路径
+   * @param {string} conflictAction - 冲突处理方式: 'skip'|'replace'|'rename'
    */
-  async copy(libraryId, items, targetFolder) {
+  async copy(libraryId, items, targetFolder, conflictAction = 'rename') {
     const response = await axios.post(`${API_BASE}/api/file/copy`, {
       libraryId,
       items,
-      targetFolder
+      targetFolder,
+      conflictAction
     });
     return response.data;
   },

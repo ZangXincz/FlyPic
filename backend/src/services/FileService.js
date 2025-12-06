@@ -701,17 +701,24 @@ class FileService {
    * @param {string} libraryId - 素材库ID
    * @param {Array} items - 待复制项
    * @param {string} targetFolder - 目标文件夹（相对路径）
+   * @param {string} conflictAction - 冲突处理方式: 'skip'|'replace'|'rename'
    */
-  async copyItems(libraryId, items, targetFolder) {
+  async copyItems(libraryId, items, targetFolder, conflictAction = 'rename') {
     const db = this._getDatabase(libraryId);
     const libraryPath = db.libraryPath;
-    const results = { success: [], failed: [] };
+    const results = { success: [], failed: [], conflicts: [] };
+
+    // 确保目标文件夹存在
+    const targetFullPath = path.join(libraryPath, targetFolder || '');
+    if (!fs.existsSync(targetFullPath)) {
+      fs.mkdirSync(targetFullPath, { recursive: true });
+    }
 
     for (const item of items) {
       try {
         const srcFullPath = path.join(libraryPath, item.path);
         const fileName = path.basename(item.path);
-        const dstFullPath = path.join(libraryPath, targetFolder, fileName);
+        const dstFullPath = path.join(targetFullPath, fileName);
 
         // 检查源文件是否存在
         if (!fs.existsSync(srcFullPath)) {
@@ -719,31 +726,80 @@ class FileService {
           continue;
         }
 
-        // 确保目标文件夹存在
-        const targetFullPath = path.join(libraryPath, targetFolder);
-        if (!fs.existsSync(targetFullPath)) {
-          fs.mkdirSync(targetFullPath, { recursive: true });
-        }
-
-        // 处理同名文件
+        // 处理冲突
         let finalDstPath = dstFullPath;
-        if (fs.existsSync(dstFullPath)) {
-          const ext = path.extname(fileName);
-          const basename = path.basename(fileName, ext);
-          let counter = 1;
+        const isDirectory = item.type === 'folder';
+        
+        // 检查是否与源路径相同（在同一文件夹内复制粘贴）
+        if (srcFullPath === dstFullPath) {
+          // 记录冲突
+          results.conflicts.push({ path: item.path, name: fileName });
           
-          while (fs.existsSync(finalDstPath)) {
-            const numberedName = `${basename} (${counter})${ext}`;
-            finalDstPath = path.join(targetFullPath, numberedName);
-            counter++;
+          if (conflictAction === 'skip') {
+            // 跳过：源和目标相同，直接跳过
+            console.log(`⏭️  跳过（源和目标相同）: ${fileName}`);
+            continue;
+          } else if (conflictAction === 'replace') {
+            // 覆盖：源和目标相同，无法覆盖自己，跳过
+            console.log(`⏭️  跳过（无法覆盖自己）: ${fileName}`);
+            continue;
+          } else if (conflictAction === 'rename') {
+            // 重命名：自动编号创建副本
+            const ext = isDirectory ? '' : path.extname(fileName);
+            const basename = isDirectory ? fileName : path.basename(fileName, ext);
+            let counter = 1;
+            
+            while (fs.existsSync(finalDstPath)) {
+              const numberedName = isDirectory
+                ? `${basename} (${counter})`
+                : `${basename} (${counter})${ext}`;
+              finalDstPath = path.join(targetFullPath, numberedName);
+              counter++;
+            }
+            console.log(`✏️  创建副本: ${path.basename(finalDstPath)}`);
+          }
+        } else if (fs.existsSync(dstFullPath)) {
+          // 目标文件存在但与源不同
+          results.conflicts.push({ path: item.path, name: fileName });
+          
+          if (conflictAction === 'skip') {
+            // 跳过冲突文件
+            console.log(`⏭️  跳过冲突文件: ${fileName}`);
+            continue;
+          } else if (conflictAction === 'replace') {
+            // 覆盖：先删除目标文件/文件夹
+            console.log(`🔄 覆盖文件: ${fileName}`);
+            if (fs.statSync(dstFullPath).isDirectory()) {
+              fs.rmSync(dstFullPath, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(dstFullPath);
+            }
+          } else if (conflictAction === 'rename') {
+            // 重命名：自动编号
+            const ext = isDirectory ? '' : path.extname(fileName);
+            const basename = isDirectory ? fileName : path.basename(fileName, ext);
+            let counter = 1;
+            
+            while (fs.existsSync(finalDstPath)) {
+              const numberedName = isDirectory
+                ? `${basename} (${counter})`
+                : `${basename} (${counter})${ext}`;
+              finalDstPath = path.join(targetFullPath, numberedName);
+              counter++;
+            }
+            console.log(`✏️  重命名为: ${path.basename(finalDstPath)}`);
           }
         }
 
         // 复制文件或文件夹
         if (item.type === 'folder') {
+          // 复制整个文件夹
           fs.cpSync(srcFullPath, finalDstPath, { recursive: true });
-          // TODO: 递归处理文件夹中的所有图片
+          
+          // 递归处理文件夹中的所有图片（生成缩略图、入库）
+          await this._processFolderImages(finalDstPath, libraryPath, db);
         } else {
+          // 复制单个文件
           fs.copyFileSync(srcFullPath, finalDstPath);
           
           // 处理新文件（生成缩略图、入库）
@@ -752,6 +808,7 @@ class FileService {
 
         const newRelativePath = path.relative(libraryPath, finalDstPath).replace(/\\/g, '/');
         results.success.push({ oldPath: item.path, newPath: newRelativePath });
+        console.log(`✅ 复制成功: ${item.path} → ${newRelativePath}`);
       } catch (error) {
         console.error(`复制失败 ${item.path}:`, error.message);
         results.failed.push({ path: item.path, error: error.message });
@@ -764,6 +821,38 @@ class FileService {
     }
 
     return results;
+  }
+
+  /**
+   * 递归处理文件夹中的所有图片
+   * @private
+   */
+  async _processFolderImages(folderPath, libraryPath, db) {
+    const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(folderPath, entry.name);
+      
+      if (entry.isDirectory()) {
+        // 跳过 .flypic 目录
+        if (entry.name === '.flypic') continue;
+        
+        // 递归处理子文件夹
+        await this._processFolderImages(fullPath, libraryPath, db);
+      } else {
+        // 检查是否是图片文件
+        const ext = path.extname(entry.name).toLowerCase();
+        const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff'];
+        
+        if (imageExts.includes(ext)) {
+          try {
+            await processImage(fullPath, libraryPath, db);
+          } catch (error) {
+            console.warn(`处理图片失败 ${entry.name}:`, error.message);
+          }
+        }
+      }
+    }
   }
 
   /**

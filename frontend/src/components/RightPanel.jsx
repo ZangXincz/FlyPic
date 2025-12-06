@@ -4,6 +4,7 @@ import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
+import { useClipboardStore } from '../stores/useClipboardStore';
 import { imageAPI, fileAPI } from '../api';
 import JSZip from 'jszip';
 
@@ -11,6 +12,7 @@ function RightPanel() {
   const { currentLibraryId } = useLibraryStore();
   const { selectedImage, selectedImages, selectedFolder, images, setSelectedImage, updateImage } = useImageStore();
   const { setMobileView, isResizingPanels, resizingSide } = useUIStore();
+  const { copyToClipboard } = useClipboardStore();
   const [isMobile, setIsMobile] = useState(false);
   const [imageUrl, setImageUrl] = useState(''); // 当前显示的图片URL
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false);
@@ -410,7 +412,12 @@ function RightPanel() {
   // 复制图片到剪贴板（支持粘贴到聊天软件和文件管理器）
   const copyImageToClipboard = async () => {
     try {
-      // 获取原图URL
+      // 1. 先写入应用内剪贴板（同步，用于应用内粘贴）
+      const itemsToCopy = [{ type: 'file', path: selectedImage.path, data: selectedImage }];
+      copyToClipboard(itemsToCopy, 'copy');
+      console.log(`📋 已复制 1 个文件到应用内剪贴板`);
+      
+      // 2. 获取原图URL，写入系统剪贴板
       const imageUrl = imageAPI.getOriginalUrl(currentLibraryId, selectedImage.path);
       
       // 方案1：尝试现代 Clipboard API（需要 HTTPS）
@@ -590,6 +597,11 @@ function RightPanel() {
     try {
       const imagesToCopy = getImagesToProcess();
       
+      // 1. 先写入应用内剪贴板（同步，用于应用内粘贴）
+      const itemsToCopy = imagesToCopy.map(img => ({ type: 'file', path: img.path, data: img }));
+      copyToClipboard(itemsToCopy, 'copy');
+      console.log(`📋 已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
+      
       if (imagesToCopy.length === 1) {
         // 单张图片：直接复制
         await copyImageToClipboard();
@@ -628,10 +640,8 @@ function RightPanel() {
             })
           );
           
-          // 创建 HTML 格式
-          const htmlContent = imageDataList.map(({ dataUrl, filename }) => 
-            `<img src="${dataUrl}" alt="${filename}" style="display:block; margin:10px 0;">`
-          ).join('\n');
+          // 创建 HTML 格式（使用 span 包裹每张图片，消除间距）
+          const htmlContent = imageDataList.map(({ dataUrl, filename }) => `<span><img src="${dataUrl}" alt="${filename}"></span>`).join('');
           
           await navigator.clipboard.write([
             new ClipboardItem({

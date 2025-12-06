@@ -7,12 +7,14 @@ import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
+import { useClipboardStore } from '../stores/useClipboardStore';
 import { imageAPI, fileAPI } from '../api';
 import requestManager, { RequestType } from '../services/requestManager';
 import FileViewer from './FileViewer';
 import ContextMenu, { menuItems } from './ContextMenu';
 import UndoToast from './UndoToast';
 import FolderSelector from './FolderSelector';
+import ConflictDialog from './ConflictDialog';
 
 // 虚拟滚动阈值：超过此数量启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 100;
@@ -123,6 +125,10 @@ function ImageWaterfall() {
   const [moveItems, setMoveItems] = useState([]); // 待移动的项
   const [editingFilename, setEditingFilename] = useState(''); // 编辑中的文件名
   const editInputRef = useRef(null); // 编辑输入框引用
+  const [conflictDialog, setConflictDialog] = useState({ isOpen: false, conflicts: [], pendingPaste: null }); // 冲突对话框
+  
+  // 剪贴板状态
+  const { copyToClipboard, getClipboard, hasClipboard } = useClipboardStore();
 
   // 监听文件夹切换，切换时关闭Toast
   useEffect(() => {
@@ -130,11 +136,29 @@ function ImageWaterfall() {
     setUndoToast({ isVisible: false, message: '', count: 0 });
   }, [selectedFolder]);
 
-  // 全局快捷键监听 - Del 键删除, Ctrl+Z 撤销, F2/Enter 重命名
+  // 全局快捷键监听 - Del 键删除, Ctrl+Z 撤销, F2/Enter 重命名, Ctrl+C 复制, Ctrl+V 粘贴
   useEffect(() => {
     const handleGlobalKeyDown = async (e) => {
       // 忽略输入框中的快捷键
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      // Ctrl+C → 复制
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        if (selectedImages.length > 0 || selectedImage) {
+          e.preventDefault();
+          handleCopy();
+        }
+        return;
+      }
+      
+      // Ctrl+V → 粘贴
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        if (hasClipboard() && selectedFolder) {
+          e.preventDefault();
+          await handlePaste();
+        }
+        return;
+      }
       
       // Ctrl+Z → 撤销
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
@@ -163,7 +187,7 @@ function ImageWaterfall() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [selectedImages, selectedImage, images, currentLibraryId, undoHistory]);
+  }, [selectedImages, selectedImage, images, currentLibraryId, undoHistory, selectedFolder, hasClipboard]);
 
   // 简单的向下无限滚动加载
   const loadMoreImages = useCallback(async () => {
@@ -697,6 +721,274 @@ function ImageWaterfall() {
     }
   }, [currentLibraryId, moveItems, images, setImages, clearSelection, setFolders]);
 
+  // 复制图片到系统剪贴板（支持多图，使用 HTML 格式）
+  const copyImagesToSystemClipboard = async (images) => {
+    try {
+      // 检查 Clipboard API 是否可用
+      if (typeof ClipboardItem === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.write !== 'function') {
+        console.warn('系统剪贴板 API 不可用');
+        return false;
+      }
+
+      if (images.length === 0) return false;
+
+      // 单张图片：直接复制为 PNG
+      if (images.length === 1) {
+        try {
+          const img = images[0];
+          const imageUrl = `/api/image/original/${currentLibraryId}/${img.path}`;
+          const response = await fetch(imageUrl);
+          const blob = await response.blob();
+          
+          // 转换为 PNG
+          const canvas = document.createElement('canvas');
+          const image = new Image();
+          
+          await new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = reject;
+            image.src = URL.createObjectURL(blob);
+          });
+          
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(image, 0, 0);
+          
+          URL.revokeObjectURL(image.src);
+          
+          const pngBlob = await new Promise((resolve) => {
+            canvas.toBlob(resolve, 'image/png');
+          });
+          
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'image/png': pngBlob
+            })
+          ]);
+          
+          return true;
+        } catch (error) {
+          console.warn('单图复制失败:', error);
+          return false;
+        }
+      }
+
+      // 多张图片：使用 HTML 格式（包含所有图片的 base64）
+      try {
+        const imageDataList = await Promise.all(
+          images.map(async (img) => {
+            const imageUrl = `/api/image/original/${currentLibraryId}/${img.path}`;
+            const response = await fetch(imageUrl);
+            const blob = await response.blob();
+            
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                resolve({
+                  dataUrl: reader.result,
+                  filename: img.filename
+                });
+              };
+              reader.readAsDataURL(blob);
+            });
+          })
+        );
+        
+        // 创建 HTML 格式（使用 span 包裹每张图片，消除间距）
+        const htmlContent = imageDataList.map(({ dataUrl, filename }) => `<span><img src="${dataUrl}" alt="${filename}"></span>`).join('');
+        
+        // 创建纯文本格式（文件名列表）
+        const textContent = images.map(img => img.filename).join('\n');
+        
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([htmlContent], { type: 'text/html' }),
+            'text/plain': new Blob([textContent], { type: 'text/plain' })
+          })
+        ]);
+        
+        return true;
+      } catch (error) {
+        console.warn('多图复制失败:', error);
+        return false;
+      }
+    } catch (error) {
+      console.warn('写入系统剪贴板失败:', error);
+      return false;
+    }
+  };
+
+  // 复制到剪贴板（立即更新应用内剪贴板，异步写入系统剪贴板）
+  const handleCopy = useCallback(() => {
+    const imagesToCopy = selectedImages.length > 0
+      ? selectedImages
+      : selectedImage
+      ? [selectedImage]
+      : [];
+
+    if (imagesToCopy.length === 0) return;
+
+    // 1. 立即写入应用内剪贴板（用于应用内粘贴，同步操作）
+    const itemsToCopy = imagesToCopy.map(img => ({ type: 'file', path: img.path, data: img }));
+    copyToClipboard(itemsToCopy, 'copy');
+    console.log(`📋 已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
+    
+    // 2. 立即显示Toast
+    setUndoToast({
+      isVisible: true,
+      message: `已复制 ${itemsToCopy.length} 个文件`,
+      count: itemsToCopy.length
+    });
+    
+    // 3秒后自动隐藏
+    setTimeout(() => {
+      setUndoToast({ isVisible: false, message: '', count: 0 });
+    }, 3000);
+    
+    // 3. 异步写入系统剪贴板（用于跨应用粘贴，不阻塞）
+    copyImagesToSystemClipboard(imagesToCopy).then(success => {
+      if (success) {
+        console.log(`✅ 已写入系统剪贴板，可粘贴到外部应用`);
+      }
+    });
+  }, [selectedImages, selectedImage, copyToClipboard, currentLibraryId]);
+
+  // 粘贴（先检查冲突）
+  const handlePaste = useCallback(async () => {
+    if (!currentLibraryId || !selectedFolder) return;
+    
+    const { items } = getClipboard();
+    if (!items || items.length === 0) return;
+
+    // 检查目标文件夹中是否存在同名文件（包括源文件本身）
+    const targetFolderImages = images.filter(img => img.folder === selectedFolder);
+    const conflicts = [];
+    
+    for (const item of items) {
+      const fileName = item.path.split('/').pop();
+      const itemFolder = item.path.substring(0, item.path.lastIndexOf('/'));
+      
+      // 检查是否存在同名文件（包括源文件本身）
+      const exists = targetFolderImages.some(img => img.filename === fileName);
+      
+      if (exists) {
+        conflicts.push({ 
+          path: item.path, 
+          name: fileName,
+          isSameLocation: itemFolder === selectedFolder // 标记是否在同一位置
+        });
+      }
+    }
+
+    // 如果有冲突，显示对话框
+    if (conflicts.length > 0) {
+      setConflictDialog({
+        isOpen: true,
+        conflicts,
+        pendingPaste: { items, targetFolder: selectedFolder }
+      });
+    } else {
+      // 没有冲突，直接执行粘贴
+      await executePaste(items, selectedFolder, 'rename');
+    }
+  }, [currentLibraryId, selectedFolder, getClipboard, images]);
+
+  // 执行粘贴操作
+  const executePaste = useCallback(async (items, targetFolder, conflictAction) => {
+    if (!currentLibraryId) return;
+
+    console.log(`📋 开始粘贴 ${items.length} 个文件到: ${targetFolder}`);
+
+    // 1. 立即更新文件夹计数（乐观更新）
+    const { folders, setFolders } = useImageStore.getState();
+    const originalFolders = folders; // 保存用于回滚
+    
+    if (folders && folders.length > 0) {
+      const updatedFolders = folders.map(folder => {
+        // 更新目标文件夹及其所有父文件夹的计数
+        if (folder.path === targetFolder || targetFolder.startsWith(folder.path + '/')) {
+          return {
+            ...folder,
+            count: (folder.count || 0) + items.length
+          };
+        }
+        return folder;
+      });
+      setFolders(updatedFolders);
+    }
+
+    // 2. 立即显示Toast
+    setUndoToast({
+      isVisible: true,
+      message: `已粘贴 ${items.length} 个文件`,
+      count: items.length
+    });
+    
+    // 3秒后自动隐藏
+    setTimeout(() => {
+      setUndoToast({ isVisible: false, message: '', count: 0 });
+    }, 3000);
+
+    // 3. 后台执行API调用（串行，确保文件夹数据是最新的）
+    (async () => {
+      try {
+        // 先执行复制
+        const result = await fileAPI.copy(currentLibraryId, items, targetFolder, conflictAction);
+        
+        // 处理结果
+        const successCount = result.data.success?.length || 0;
+        const failedCount = result.data.failed?.length || 0;
+        
+        if (failedCount > 0) {
+          // 有失败的项，更新Toast提示
+          setUndoToast({
+            isVisible: true,
+            message: successCount > 0 
+              ? `已粘贴 ${successCount} 个文件，${failedCount} 个失败`
+              : `粘贴失败: ${result.data.failed[0].error}`,
+            count: successCount
+          });
+          
+          setTimeout(() => {
+            setUndoToast({ isVisible: false, message: '', count: 0 });
+          }, 3000);
+        }
+
+        // 刷新当前文件夹的图片列表
+        if (selectedFolder === targetFolder) {
+          const params = { folder: selectedFolder };
+          const response = await imageAPI.search(currentLibraryId, params);
+          setImages(response.images);
+        }
+
+        // 复制完成后再刷新文件夹列表（确保拿到最新数据）
+        const foldersRes = await imageAPI.getFolders(currentLibraryId);
+        setFolders(foldersRes.folders);
+      } catch (error) {
+        console.error('粘贴失败:', error);
+        // 失败时回滚文件夹计数
+        setFolders(originalFolders);
+        setUndoToast({ isVisible: false, message: '', count: 0 });
+        alert('粘贴失败: ' + (error.message || '未知错误'));
+      }
+    })();
+  }, [currentLibraryId, selectedFolder, setImages]);
+
+  // 处理冲突对话框的选择
+  const handleConflictResolve = useCallback(async (action) => {
+    const { pendingPaste } = conflictDialog;
+    if (!pendingPaste) return;
+
+    setConflictDialog({ isOpen: false, conflicts: [], pendingPaste: null });
+    await executePaste(pendingPaste.items, pendingPaste.targetFolder, action);
+  }, [conflictDialog, executePaste]);
+
+  // 取消冲突对话框
+  const handleConflictCancel = useCallback(() => {
+    setConflictDialog({ isOpen: false, conflicts: [], pendingPaste: null });
+  }, []);
+
   // 开始重命名
   const handleStartRename = useCallback((image) => {
     if (!image) return;
@@ -776,6 +1068,10 @@ function ImageWaterfall() {
     }
     
     menuOptions.push(
+      menuItems.copy(() => {
+        setContextMenu({ isOpen: false, position: null, image: null });
+        handleCopy();
+      }),
       menuItems.move(handleMoveClick),
       menuItems.delete(async () => {
         setContextMenu({ isOpen: false, position: null, image: null });
@@ -784,7 +1080,7 @@ function ImageWaterfall() {
     );
     
     return menuOptions;
-  }, [selectedImages, selectedImage, handleMoveClick, handleStartRename]);
+  }, [selectedImages, selectedImage, handleMoveClick, handleStartRename, handleCopy]);
 
   // 渲染单个图片单元格
   const renderImageCell = (image, flatIndex) => {
@@ -1069,6 +1365,14 @@ function ImageWaterfall() {
           }}
         />
       )}
+
+      {/* 冲突处理对话框 */}
+      <ConflictDialog
+        isOpen={conflictDialog.isOpen}
+        conflicts={conflictDialog.conflicts}
+        onResolve={handleConflictResolve}
+        onCancel={handleConflictCancel}
+      />
     </div>
   );
 }
