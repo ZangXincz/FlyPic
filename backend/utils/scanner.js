@@ -10,6 +10,8 @@ const {
   clearSharpCache
 } = require('./thumbnail');
 const scanManager = require('./scanManager');
+const { constants } = require('../src/config');
+const logger = require('../src/utils/logger');
 
 /**
  * Get all image files in a directory
@@ -379,8 +381,8 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
 
     // 批量写入缓冲区
     let writeBuffer = [];
-    const WRITE_BATCH_SIZE = 50; // 每 50 条写入一次数据库（降低内存峰值）
-    const STREAM_BATCH_SIZE = 200; // 每批处理 200 个文件（流式处理）
+    const WRITE_BATCH_SIZE = constants.SCAN.WRITE_BATCH_SIZE;
+    const STREAM_BATCH_SIZE = constants.SCAN.STREAM_BATCH_SIZE;
 
     // 批量写入函数（事务）
     const batchWrite = db.db.transaction((items) => {
@@ -464,16 +466,19 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
         writeBuffer = [];
       }
 
-      // 每1000个文件输出一次进度（减少日志）
-      if (processedCount % 1000 === 0) {
+      // 定期输出进度
+      const logInterval = constants.SCAN.PROGRESS_LOG_INTERVAL;
+      const gcInterval = constants.SCAN.GC_TRIGGER_INTERVAL;
+      
+      if (processedCount % logInterval === 0) {
         const elapsed = (Date.now() - startTime) / 1000;
         const speed = processedCount / elapsed;
         const percent = ((processedCount / total) * 100).toFixed(1);
-        console.log(`⚡ ${processedCount}/${total} (${percent}%) | ${speed.toFixed(1)} 张/秒`);
+        logger.info(`扫描进度: ${processedCount}/${total} (${percent}%) | ${speed.toFixed(1)} 张/秒`);
       }
       
-      // 每 1000 个文件触发一次 GC
-      if (processedCount > 0 && processedCount % 1000 === 0 && global.gc) {
+      // 定期触发 GC
+      if (processedCount > 0 && processedCount % gcInterval === 0 && global.gc) {
         global.gc();
       }
     }
@@ -485,7 +490,7 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     }
 
     const totalTime = (Date.now() - startTime) / 1000;
-    console.log(`✅ 扫描完成: ${total} 个文件 (${totalTime.toFixed(1)}秒, ${(total / totalTime).toFixed(1)} 张/秒)`);
+    logger.info(`扫描完成: ${total} 个文件 (${totalTime.toFixed(1)}秒, ${(total / totalTime).toFixed(1)} 张/秒)`);
 
     // Update folder image counts
     db.updateAllFolderCounts();
@@ -496,7 +501,7 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     // 强制 GC（如果可用）
     if (global.gc) {
       global.gc();
-      console.log('🧹 内存已清理');
+      logger.debug('内存已清理');
     }
 
     // 标记扫描完成
@@ -505,7 +510,7 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     }
     return results;
   } catch (error) {
-    console.error('❌ 扫描失败:', error.message);
+    logger.error('扫描失败:', error.message);
     if (libraryId) {
       scanManager.completeScan(libraryId);
     }

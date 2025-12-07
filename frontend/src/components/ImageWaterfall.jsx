@@ -1399,6 +1399,14 @@ function ImageWaterfall() {
     const isMultiSelection = selectedImages.length > 0;
     const menuOptions = [];
     
+    // 复制选项放在第一位
+    menuOptions.push(
+      menuItems.copy(() => {
+        setContextMenu({ isOpen: false, position: null, image: null });
+        handleCopy();
+      })
+    );
+    
     // 只在单选时显示重命名选项
     if (!isMultiSelection) {
       menuOptions.push(
@@ -1410,10 +1418,6 @@ function ImageWaterfall() {
     }
     
     menuOptions.push(
-      menuItems.copy(() => {
-        setContextMenu({ isOpen: false, position: null, image: null });
-        handleCopy();
-      }),
       menuItems.move(handleMoveClick),
       menuItems.delete(async () => {
         setContextMenu({ isOpen: false, position: null, image: null });

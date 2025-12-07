@@ -14,10 +14,7 @@ export const fileAPI = {
    * @param {Array} items - 待删除项 [{type: 'file'|'folder', path: 'path'}]
    */
   async delete(libraryId, items) {
-    return api.delete('/file/delete', {
-      body: JSON.stringify({ libraryId, items }),
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return api.delete('/file/delete', { libraryId, items });
   },
 
   /**

@@ -6,9 +6,11 @@
 const fs = require('fs');
 const path = require('path');
 const { processImage } = require('../../utils/scanner');
+const { constants } = require('../config');
+const logger = require('../utils/logger');
 
-// 临时备份目录（用于撤销恢复）- 放在 .flypic 内部
-const TEMP_BACKUP_DIR = '.flypic/temp_backup';
+// 临时备份目录（用于撤销恢复）
+const TEMP_BACKUP_DIR = constants.PATHS.TEMP_BACKUP_DIR;
 
 class FileService {
   constructor(dbPool, configManager) {
@@ -175,7 +177,7 @@ class FileService {
       return { cleaned: 0, failed: 0, thumbnailsCleaned: 0 };
     }
 
-    const FIVE_MINUTES = 5 * 60 * 1000; // 5分钟
+    const EXPIRY_TIME = constants.FILE_OPERATIONS.TEMP_FILE_EXPIRY_MS;
     const now = Date.now();
     let cleaned = 0;
     let failed = 0;
@@ -199,8 +201,8 @@ class FileService {
             const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
             const age = now - meta.deletedAt;
             
-            // 超过5分钟，移入系统回收站
-            if (age > FIVE_MINUTES) {
+            // 超过配置的过期时间，移入系统回收站
+            if (age > EXPIRY_TIME) {
               try {
                 // 1. 清理缩略图（在移入回收站前）
                 if (meta.imageRecords) {
@@ -212,10 +214,10 @@ class FileService {
                         if (fs.existsSync(thumbnailFullPath)) {
                           fs.unlinkSync(thumbnailFullPath);
                           thumbnailsCleaned++;
-                          console.log(`🧹 已清理缩略图: ${record.thumbnail_path}`);
+                          logger.debug(`已清理缩略图: ${record.thumbnail_path}`);
                         }
                       } catch (thumbError) {
-                        console.warn(`清理缩略图失败 ${record.thumbnail_path}:`, thumbError.message);
+                        logger.warn(`清理缩略图失败 ${record.thumbnail_path}:`, thumbError.message);
                       }
                     }
                   }
@@ -227,14 +229,14 @@ class FileService {
                 await trash([fullPath]);
                 fs.unlinkSync(metaPath); // 删除 meta 文件
                 cleaned++;
-                console.log(`🗑️ 已将过期文件移入回收站: ${meta.originalPath}`);
+                logger.info(`已将过期文件移入回收站: ${meta.originalPath}`);
               } catch (error) {
-                console.error(`清理失败 ${meta.originalPath}:`, error);
+                logger.error(`清理失败 ${meta.originalPath}:`, error);
                 failed++;
               }
             }
           } catch (error) {
-            console.error(`读取 meta 失败 ${metaPath}:`, error);
+            logger.error(`读取 meta 失败 ${metaPath}:`, error);
           }
         } else if (fs.statSync(fullPath).isDirectory()) {
           // 递归处理子目录
@@ -291,7 +293,7 @@ class FileService {
             // 根目录也删除（如果完全为空）
             try {
               fs.rmdirSync(dir);
-              console.log(`🧹 已删除空的备份目录: ${TEMP_BACKUP_DIR}`);
+              logger.debug(`已删除空的备份目录: ${TEMP_BACKUP_DIR}`);
             } catch (error) {
               // 忽略根目录删除失败
             }
@@ -300,7 +302,7 @@ class FileService {
             try {
               fs.rmdirSync(dir);
               const relativePath = path.relative(backupDir, dir);
-              console.log(`🧹 已删除空文件夹: ${relativePath}`);
+              logger.debug(`已删除空文件夹: ${relativePath}`);
             } catch (error) {
               // 忽略删除失败（可能权限问题）
             }
@@ -315,30 +317,10 @@ class FileService {
     try {
       removeEmptyDirs(backupDir);
     } catch (error) {
-      console.warn('[cleanExpiredTempFiles] 清理空文件夹时出错:', error.message);
+      logger.warn('[cleanExpiredTempFiles] 清理空文件夹时出错:', error.message);
     }
 
     return { cleaned, failed, thumbnailsCleaned };
-  }
-
-  /**
-   * 递归复制目录
-   */
-  _copyDirSync(src, dest) {
-    fs.mkdirSync(dest, { recursive: true });
-    const files = fs.readdirSync(src);
-    
-    for (const file of files) {
-      const srcPath = path.join(src, file);
-      const destPath = path.join(dest, file);
-      const stat = fs.statSync(srcPath);
-      
-      if (stat.isDirectory()) {
-        this._copyDirSync(srcPath, destPath);
-      } else {
-        fs.copyFileSync(srcPath, destPath);
-      }
-    }
   }
 
   /**

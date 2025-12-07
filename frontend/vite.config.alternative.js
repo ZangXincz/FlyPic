@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// 备用配置：禁用代码分割（如果有问题可以使用此配置）
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -16,12 +17,15 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
-    // 提高 chunk 大小警告阈值（可选）
-    chunkSizeWarningLimit: 600,
+    // 提高 chunk 大小警告阈值
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
-        // 暂时禁用代码分割，避免依赖问题
-        // manualChunks: undefined
+        // 使用简单的代码分割
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-ui': ['lucide-react', 'react-photo-view'],
+        }
       }
     }
   },

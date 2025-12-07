@@ -527,28 +527,20 @@ function Sidebar() {
       
       console.log(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
       
-      // 1. 立即清空图片列表（避免显示旧路径的无效图片）
-      const { setImages, setFolders, setSelectedFolder: setSelectedFolderGlobal } = useImageStore.getState();
-      setImages([]);
+      const { setFolders, setSelectedFolder: setSelectedFolderGlobal } = useImageStore.getState();
       
-      // 2. 重新加载文件夹列表（关键：确保浏览器重新渲染）
-      const foldersRes = await imageAPI.getFolders(currentLibraryId);
-      console.log('📁 重命名后最新文件夹列表:', foldersRes.folders);
-      setFolders(foldersRes.folders);
-      
-      // 3. 如果重命名的是当前选中的文件夹，强制触发重新加载
+      // 1. 如果重命名的是当前选中的文件夹，立即切换到新路径
+      // 这样可以避免先显示全部图片的闪烁
       if (isRenamingCurrentFolder) {
         console.log(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
-        
-        // 先切换到 null，再切换到新路径，强制触发 useEffect
-        setSelectedFolderGlobal(null);
-        
-        // 使用 setTimeout 确保状态更新被 React 检测到
-        setTimeout(() => {
-          setSelectedFolderGlobal(newPath);
-          console.log('✅ 已切换到新文件夹, selectedFolder =', newPath);
-        }, 50);
+        setSelectedFolderGlobal(newPath);
       }
+      
+      // 2. 后台刷新文件夹列表（不阻塞UI）
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        console.log('📁 重命名后最新文件夹列表:', foldersRes.folders);
+        setFolders(foldersRes.folders);
+      });
     } catch (error) {
       console.error('文件夹重命名失败:', error);
       alert('重命名失败: ' + (error.message || '未知错误'));
@@ -1404,15 +1396,15 @@ function Sidebar() {
             className={`flex items-center px-3 py-2 cursor-pointer rounded-md transition-colors ${selectedFolder === null
                 ? 'bg-blue-50 dark:bg-blue-900'
                 : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+            }`}
             onClick={() => setSelectedFolder(null)}
           >
             <div className="w-5 mr-1" />
             <Folder className="w-4 h-4 mr-2 text-blue-500 flex-shrink-0" />
-            <span className="text-sm text-gray-700 dark:text-gray-300 font-medium flex-1">
+            <span className="text-sm text-gray-700 dark:text-gray-200 font-medium flex-1">
               全部图片
             </span>
-            <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
+            <span className="text-xs text-gray-500 dark:text-gray-300 ml-2">
               {totalImageCount}
             </span>
           </div>

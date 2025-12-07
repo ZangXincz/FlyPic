@@ -137,9 +137,19 @@ function patch(url, body, options = {}) {
 
 /**
  * DELETE 请求
+ * 支持带 body 的 DELETE 请求（用于批量删除等操作）
  */
-function del(url, options = {}) {
-  return request(url, { method: 'DELETE', ...options });
+function del(url, body, options = {}) {
+  // 如果 body 是对象（非 options），则作为请求体发送
+  if (body && typeof body === 'object' && !body.method) {
+    return request(url, { 
+      method: 'DELETE', 
+      body: JSON.stringify(body),
+      ...options 
+    });
+  }
+  // 否则，body 实际上是 options
+  return request(url, { method: 'DELETE', ...body });
 }
 
 export const api = {

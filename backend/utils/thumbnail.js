@@ -2,25 +2,25 @@ const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { constants } = require('../src/config');
+const logger = require('../src/utils/logger');
 
 // 配置 Sharp 内存限制（防止内存泄漏）
-sharp.cache({
-  memory: 20,  // 最大缓存 20MB（更激进）
-  files: 0,    // 禁用文件缓存
-  items: 10    // 最多缓存 10 个操作
-});
+const SHARP_CONFIG = {
+  memory: constants.THUMBNAIL_GENERATION.SHARP_CACHE_MEMORY_MB,
+  files: 0,
+  items: constants.THUMBNAIL_GENERATION.SHARP_CACHE_ITEMS
+};
+
+sharp.cache(SHARP_CONFIG);
 
 // 设置并发限制
-sharp.concurrency(1); // 一次只处理 1 张图片
+sharp.concurrency(constants.THUMBNAIL_GENERATION.SHARP_CONCURRENCY);
 
 // 清理 Sharp 缓存的函数（扫描完成后调用）
 function clearSharpCache() {
   sharp.cache(false);  // 完全禁用缓存
-  sharp.cache({        // 重新启用最小缓存
-    memory: 20,
-    files: 0,
-    items: 10
-  });
+  sharp.cache(SHARP_CONFIG); // 重新启用最小缓存
 }
 
 // 支持的文件格式（确定可以生成缩略图的）
@@ -215,8 +215,9 @@ async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
       sharpJagged = 1.0;
     }
 
-    // 固定高质量 92（平衡清晰度和体积）
-    const quality = 92;
+    // 使用配置的质量
+    const quality = constants.THUMBNAIL_GENERATION.DEFAULT_QUALITY;
+    const effort = constants.THUMBNAIL_GENERATION.EFFORT;
 
     // 生成缩略图（使用 buffer，不锁定原文件）
     await sharp(inputBuffer)
@@ -239,7 +240,7 @@ async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
       })
       .webp({
         quality: quality,
-        effort: 4,            // 降低 effort，减少编码损失
+        effort: effort,
         smartSubsample: false, // 关键！禁用色度子采样，保持边缘清晰
         nearLossless: false,   // 禁用近无损（会增加体积但不增加清晰度）
         preset: 'photo',
@@ -251,7 +252,8 @@ async function generateThumbnail(inputPath, outputPath, targetHeight = 200) {
     inputBuffer = null;
     
     // 强制 GC（如果可用）
-    if (global.gc && Math.random() < 0.1) { // 10% 概率执行 GC
+    const gcProbability = constants.THUMBNAIL_GENERATION.GC_PROBABILITY;
+    if (global.gc && Math.random() < gcProbability) {
       global.gc();
     }
 
@@ -330,6 +332,8 @@ async function generateImageThumbnails(imagePath, libraryPath) {
 
   // Sharding: use first 2 chars of hash for subdirectories (e.g. /ab/)
   const shard1 = hash.slice(0, 2);
+  const targetHeight = constants.THUMBNAIL_GENERATION.TARGET_HEIGHT;
+  
   // 1-level sharding: .flypic/thumbnails/ab/hash.webp
   const out480 = path.join(flypicDir, 'thumbnails', shard1, `${hash}.webp`);
   fs.mkdirSync(path.dirname(out480), { recursive: true });
@@ -341,7 +345,7 @@ async function generateImageThumbnails(imagePath, libraryPath) {
 
   if (fileType === 'image' && canGenerateThumbnail(imagePath)) {
     // 图片：使用 Sharp 生成真实缩略图
-    thumbnailResult = await generateThumbnail(imagePath, out480, 480);
+    thumbnailResult = await generateThumbnail(imagePath, out480, targetHeight);
   } else if (fileType === 'video') {
     // 视频：尝试提取封面
     thumbnailResult = await extractVideoThumbnail(imagePath, out480);
@@ -555,8 +559,8 @@ async function extractVideoThumbnail(videoPath, outputPath) {
  */
 async function generatePlaceholderThumbnail(outputPath, type, label) {
   // 使用 Sharp 生成简单的占位图
-  const width = 640;
-  const height = 480;
+  const width = constants.THUMBNAIL_GENERATION.PLACEHOLDER_WIDTH;
+  const height = constants.THUMBNAIL_GENERATION.PLACEHOLDER_HEIGHT;
 
   // 不同类型的背景色和图标
   const typeConfig = {
@@ -622,14 +626,14 @@ async function generatePlaceholderThumbnail(outputPath, type, label) {
   `;
 
   await sharp(Buffer.from(svg))
-    .resize(640, 480)
+    .resize(width, height)
     .webp({ quality: 85 })
     .toFile(outputPath);
 
   const stats = fs.statSync(outputPath);
   return {
-    width: 640,
-    height: 480,
+    width,
+    height,
     size: stats.size,
     path: outputPath
   };

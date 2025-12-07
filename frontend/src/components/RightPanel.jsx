@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Copy, Download, Check, FolderDown, ArrowLeft, Folder } from 'lucide-react';
+import { Copy, Download, Check, FolderDown, ArrowLeft, Folder, FileQuestion } from 'lucide-react';
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
 import { useUIStore } from '../stores/useUIStore';
@@ -27,6 +27,10 @@ function RightPanel() {
   const [editingFilename, setEditingFilename] = useState('');
   const filenameInputRef = useRef(null);
   const [isUpdatingRating, setIsUpdatingRating] = useState(false);
+  // 文件夹重命名相关
+  const [isEditingFolderName, setIsEditingFolderName] = useState(false);
+  const [editingFolderName, setEditingFolderName] = useState('');
+  const folderNameInputRef = useRef(null);
 
   // 计算实际选中的图片数量（合并 selectedImage 和 selectedImages）
   const actualSelectedCount = (() => {
@@ -158,8 +162,9 @@ function RightPanel() {
 
     try {
       const result = await fileAPI.rename(currentLibraryId, selectedImage.path, newFilename);
-      const newPath = result.data.newPath;
-      const actualNewName = result.data.newName;
+      // client.js 已自动解包 data，直接访问属性
+      const newPath = result.newPath;
+      const actualNewName = result.newName;
       
       updateImage(selectedImage.path, {
         path: newPath,
@@ -180,6 +185,101 @@ function RightPanel() {
   const handleCancelRename = () => {
     setIsEditingFilename(false);
     setEditingFilename('');
+  };
+
+  // ===== 文件夹重命名功能 =====
+  
+  // 开始重命名文件夹
+  const handleStartRenameFolderName = () => {
+    if (!selectedFolderItem) return;
+    setIsEditingFolderName(true);
+    setEditingFolderName(selectedFolderItem.name);
+    // 聚焦输入框
+    setTimeout(() => {
+      folderNameInputRef.current?.focus();
+      folderNameInputRef.current?.select();
+    }, 50);
+  };
+
+  // 完成文件夹重命名
+  const handleFinishRenameFolderName = async () => {
+    if (!selectedFolderItem || !editingFolderName.trim()) {
+      setIsEditingFolderName(false);
+      setEditingFolderName('');
+      return;
+    }
+
+    const oldName = selectedFolderItem.name;
+    const newName = editingFolderName.trim();
+
+    // 如果名称没有改变，直接退出
+    if (newName === oldName) {
+      setIsEditingFolderName(false);
+      setEditingFolderName('');
+      return;
+    }
+
+    const oldPath = selectedFolderItem.path;
+    const isRenamingCurrentFolder = selectedFolder === oldPath;
+
+    try {
+      // 调用重命名API
+      const result = await fileAPI.rename(currentLibraryId, oldPath, newName);
+      const newPath = result.newPath;
+      
+      console.log(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
+      
+      const { setFolders, setSelectedFolder: setSelectedFolderGlobal, setSelectedFolderItem } = useImageStore.getState();
+      
+      // 1. 立即更新选中的文件夹项（乐观更新）
+      setSelectedFolderItem({
+        ...selectedFolderItem,
+        path: newPath,
+        name: newName
+      });
+      
+      // 2. 如果重命名的是当前选中的文件夹，立即切换到新路径
+      // 这样可以避免先显示全部图片的闪烁
+      if (isRenamingCurrentFolder) {
+        console.log(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
+        setSelectedFolderGlobal(newPath);
+      }
+      
+      // 3. 后台刷新文件夹列表（确保数据一致性）
+      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
+        console.log('📁 重命名后最新文件夹列表:', foldersRes.folders);
+        setFolders(foldersRes.folders);
+        
+        // 用最新数据更新选中的文件夹项
+        const newFolderItem = foldersRes.folders.find(f => f.path === newPath);
+        if (newFolderItem) {
+          setSelectedFolderItem(newFolderItem);
+        }
+      });
+    } catch (error) {
+      console.error('文件夹重命名失败:', error);
+      alert('重命名失败: ' + (error.message || '未知错误'));
+    } finally {
+      setIsEditingFolderName(false);
+      setEditingFolderName('');
+    }
+  };
+
+  // 取消文件夹重命名
+  const handleCancelRenameFolderName = () => {
+    setIsEditingFolderName(false);
+    setEditingFolderName('');
+  };
+
+  // 文件夹名称键盘事件处理
+  const handleFolderNameKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleFinishRenameFolderName();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancelRenameFolderName();
+    }
   };
 
   // 更新评分（支持单选和多选）
@@ -230,6 +330,13 @@ function RightPanel() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
   
+  // 判断是否为可以直接显示原图的格式
+  const canShowOriginal = (format) => {
+    if (!format) return false;
+    const supportedFormats = ['jpg', 'jpeg', 'png', 'webp'];
+    return supportedFormats.includes(format.toLowerCase());
+  };
+
   // 图片加载策略：先显示缩略图，后台加载原图；拖动右侧面板时只显示缩略图
   useEffect(() => {
     if (!selectedImage || !currentLibraryId) {
@@ -240,6 +347,18 @@ function RightPanel() {
     // 1. 立即显示缩略图
     const thumbnailUrl = getThumbnailUrl();
     setImageUrl(thumbnailUrl);
+    
+    // 检查图片格式
+    const imageFormat = selectedImage.format;
+    const shouldLoadOriginal = canShowOriginal(imageFormat);
+    
+    // 对于不支持的格式，只显示缩略图
+    if (!shouldLoadOriginal) {
+      setIsLoadingOriginal(false);
+      console.log(`格式 ${imageFormat} 不支持直接显示原图，使用缩略图`);
+      return;
+    }
+    
     setIsLoadingOriginal(true);
     
     // 如果正在拖动任一面板，则先不加载原图，降低主线程和解码压力
@@ -248,7 +367,7 @@ function RightPanel() {
       return;
     }
 
-    // 2. 后台预加载原图
+    // 2. 后台预加载原图（仅支持的格式）
     const originalUrl = getOriginalUrl();
     const img = new Image();
     
@@ -286,9 +405,15 @@ function RightPanel() {
   }
 
   const getThumbnailUrl = () => {
-    if (!currentLibraryId || !selectedImage?.thumbnail_path) return '';
+    if (!currentLibraryId) return '';
+    // 支持两种字段名
+    const thumbnailPath = selectedImage?.thumbnailPath || selectedImage?.thumbnail_path;
+    if (!thumbnailPath) {
+      console.warn('缩略图路径不存在:', selectedImage);
+      return '';
+    }
     // Handle both forward and backslash
-    const filename = selectedImage.thumbnail_path.replace(/\\/g, '/').split('/').pop();
+    const filename = thumbnailPath.replace(/\\/g, '/').split('/').pop();
     return imageAPI.getThumbnailUrl(currentLibraryId, filename);
   };
   
@@ -991,7 +1116,27 @@ function RightPanel() {
             <div className="space-y-2 text-sm">
               <div>
                 <span className="text-gray-500 dark:text-gray-400">文件夹名:</span>
-                <p className="text-gray-900 dark:text-gray-100 break-all">{folderName}</p>
+                {isEditingFolderName ? (
+                  <input
+                    ref={folderNameInputRef}
+                    type="text"
+                    value={editingFolderName}
+                    onChange={(e) => setEditingFolderName(e.target.value)}
+                    onBlur={handleFinishRenameFolderName}
+                    onKeyDown={handleFolderNameKeyDown}
+                    className="w-full text-gray-900 dark:text-gray-100 bg-transparent border-none outline-none focus:outline-none break-all underline decoration-2 decoration-blue-500 underline-offset-2"
+                    style={{ padding: 0, margin: 0 }}
+                    placeholder="输入文件夹名"
+                  />
+                ) : (
+                  <p 
+                    className="text-gray-900 dark:text-gray-100 break-all cursor-pointer hover:text-blue-500 transition-colors"
+                    onClick={handleStartRenameFolderName}
+                    title="点击重命名"
+                  >
+                    {folderName}
+                  </p>
+                )}
               </div>
               <div>
                 <span className="text-gray-500 dark:text-gray-400">包含图片:</span>
@@ -1083,30 +1228,118 @@ function RightPanel() {
       
       {/* Progressive Image Preview */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-        <div className="w-full aspect-square bg-transparent border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden relative">
-          <img
-            src={imageUrl}
-            alt={displayImage.filename}
-            decoding="async"
-            className={`w-full h-full object-contain transition-opacity duration-300 ${
-              isLoadingOriginal ? 'opacity-75' : 'opacity-100'
-            }`}
-          />
-          {isLoadingOriginal && (
-            <div className="absolute top-2 right-2 bg-blue-500 text-white text-xs px-2 py-1 rounded">
-              加载原图中...
-            </div>
-          )}
-        </div>
+        {isMultiSelect ? (
+          // 多选模式：显示堆叠效果（前5张）
+          <div 
+            className="w-full aspect-square bg-transparent rounded-lg relative flex items-center justify-center cursor-pointer"
+            onDoubleClick={() => {
+              // 双击打开第一张图片原文件（交给浏览器原生处理）
+              const firstImage = getImagesToProcess()[0];
+              if (firstImage && currentLibraryId) {
+                const originalUrl = imageAPI.getOriginalUrl(currentLibraryId, firstImage.path);
+                if (originalUrl) {
+                  window.open(originalUrl, '_blank');
+                }
+              }
+            }}
+            title="双击查看第一张图片"
+          >
+            {(() => {
+              const imagesToShow = getImagesToProcess().slice(0, 5);
+              const stackCount = imagesToShow.length;
+              
+              return imagesToShow.map((img, index) => {
+                // 从前往后堆叠，第一张在最上面
+                const reverseIndex = stackCount - 1 - index;
+                // 计算偏移，让堆叠整体居中（减去一半的最大偏移量）
+                const maxOffset = (stackCount - 1) * 6;
+                const offsetX = reverseIndex * 6 - maxOffset / 2;
+                const offsetY = reverseIndex * 6 - maxOffset / 2;
+                const rotation = (reverseIndex - (stackCount - 1) / 2) * 5; // 旋转效果（增大角度）
+                const zIndex = stackCount - 1 - index; // 第一张图 zIndex 最大
+                // 提取缩略图文件名
+                const thumbnailPath = img.thumbnailPath || img.thumbnail_path;
+                const filename = thumbnailPath ? thumbnailPath.replace(/\\/g, '/').split('/').pop() : '';
+                const imgUrl = filename ? imageAPI.getThumbnailUrl(currentLibraryId, filename) : '';
+                
+                return (
+                  <div
+                    key={img.id}
+                    className="absolute border-[3px] border-white dark:border-gray-600 rounded-lg overflow-hidden transition-all bg-white dark:bg-gray-800"
+                    style={{
+                      width: '85%',
+                      height: '85%',
+                      transform: `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`,
+                      zIndex: zIndex,
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1)'
+                    }}
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={img.filename}
+                      decoding="async"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                );
+              });
+            })()}
+            {actualSelectedCount > 5 && (
+              <div className="absolute bottom-2 right-2 bg-blue-500 text-white text-xs px-3 py-1.5 rounded-full shadow-lg font-semibold" style={{ zIndex: 100 }}>
+                +{actualSelectedCount - 5}
+              </div>
+            )}
+          </div>
+        ) : (
+          // 单选模式：显示单张图片
+          <div 
+            className="w-full aspect-square bg-transparent border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden relative cursor-pointer"
+            onDoubleClick={() => {
+              // 双击始终打开原始文件 URL（交给浏览器原生处理）
+              const originalUrl = getOriginalUrl();
+              if (originalUrl) {
+                window.open(originalUrl, '_blank');
+              }
+            }}
+            title="双击查看原文件"
+          >
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={displayImage.filename}
+                decoding="async"
+                className={`w-full h-full object-contain transition-opacity duration-300 ${
+                  isLoadingOriginal ? 'opacity-75' : 'opacity-100'
+                }`}
+                onError={(e) => {
+                  console.error('图片加载失败:', imageUrl);
+                  e.target.style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900">
+                <FileQuestion className="w-20 h-20 text-gray-400 dark:text-gray-600 mb-2" />
+                <p className="text-sm text-gray-500 dark:text-gray-400">缩略图不可用</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{displayImage?.format?.toUpperCase() || '未知格式'}</p>
+                <p className="text-xs text-blue-500 dark:text-blue-400 mt-2">双击查看原文件</p>
+              </div>
+            )}
+            {isLoadingOriginal && imageUrl && (
+              <div className="absolute top-2 right-2 bg-blue-500 text-white text-xs px-2 py-1 rounded">
+                加载原图中...
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Image Info - 可滚动区域 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
         <div>
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+          <h3 className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
             {isMultiSelect ? `已选择 ${actualSelectedCount} 张图片` : '基本信息'}
           </h3>
-          <div className="space-y-2 text-sm">
+          <div className="space-y-2 text-xs">
             {isMultiSelect ? (
               // 多选模式
               (() => {
@@ -1117,7 +1350,7 @@ function RightPanel() {
                   <>
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">数量:</span>
-                      <p className="text-gray-900 dark:text-gray-100">{stats.count} 张图片</p>
+                      <p className="text-gray-900 dark:text-gray-100 text-xs">{stats.count} 张图片</p>
                     </div>
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">评分:</span>
@@ -1150,7 +1383,7 @@ function RightPanel() {
                     </div>
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">尺寸范围:</span>
-                      <p className="text-gray-900 dark:text-gray-100">
+                      <p className="text-gray-900 dark:text-gray-100 text-xs">
                         {stats.dimensionRange.minWidth === stats.dimensionRange.maxWidth && 
                          stats.dimensionRange.minHeight === stats.dimensionRange.maxHeight ? (
                           // 所有图片尺寸相同
@@ -1163,11 +1396,11 @@ function RightPanel() {
                     </div>
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">总大小:</span>
-                      <p className="text-gray-900 dark:text-gray-100">{formatFileSize(stats.totalSize)}</p>
+                      <p className="text-gray-900 dark:text-gray-100 text-xs">{formatFileSize(stats.totalSize)}</p>
                     </div>
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">格式:</span>
-                      <p className="text-gray-900 dark:text-gray-100 uppercase">
+                      <p className="text-gray-900 dark:text-gray-100 text-xs uppercase">
                         {stats.formats.join(', ')}
                       </p>
                     </div>
@@ -1223,12 +1456,12 @@ function RightPanel() {
                           }
                         }}
                         onBlur={handleFinishRename}
-                        className="w-full text-gray-900 dark:text-gray-100 bg-transparent border-none outline-none focus:outline-none break-all underline decoration-2 decoration-blue-500 underline-offset-2"
+                        className="w-full text-gray-900 dark:text-gray-100 text-xs bg-transparent border-none outline-none focus:outline-none break-all underline decoration-2 decoration-blue-500 underline-offset-2"
                         style={{ padding: 0, margin: 0 }}
                       />
                     ) : (
                       <p 
-                        className="text-gray-900 dark:text-gray-100 break-all cursor-pointer hover:text-blue-500 transition-colors"
+                        className="text-gray-900 dark:text-gray-100 text-xs break-all cursor-pointer hover:text-blue-500 transition-colors"
                         onClick={handleStartRename}
                         title="点击编辑文件名"
                       >
@@ -1248,24 +1481,24 @@ function RightPanel() {
                   </div>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">尺寸:</span>
-                    <p className="text-gray-900 dark:text-gray-100">{selectedImage.width} × {selectedImage.height}</p>
+                    <p className="text-gray-900 dark:text-gray-100 text-xs">{selectedImage.width} × {selectedImage.height}</p>
                   </div>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">文件大小:</span>
-                    <p className="text-gray-900 dark:text-gray-100">{formatFileSize(selectedImage.size)}</p>
+                    <p className="text-gray-900 dark:text-gray-100 text-xs">{formatFileSize(selectedImage.size)}</p>
                   </div>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">格式:</span>
-                    <p className="text-gray-900 dark:text-gray-100 uppercase">{selectedImage.format}</p>
+                    <p className="text-gray-900 dark:text-gray-100 text-xs uppercase">{selectedImage.format}</p>
                   </div>
                   
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">创建时间:</span>
-                    <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.createdAt || selectedImage.created_at)}</p>
+                    <p className="text-gray-900 dark:text-gray-100 text-xs">{formatDate(selectedImage.createdAt || selectedImage.created_at)}</p>
                   </div>
                   <div>
                     <span className="text-gray-500 dark:text-gray-400">修改时间:</span>
-                    <p className="text-gray-900 dark:text-gray-100">{formatDate(selectedImage.modifiedAt || selectedImage.modified_at)}</p>
+                    <p className="text-gray-900 dark:text-gray-100 text-xs">{formatDate(selectedImage.modifiedAt || selectedImage.modified_at)}</p>
                   </div>
                 </>
               )}
@@ -1367,33 +1600,6 @@ function RightPanel() {
             </div>
           )}
         </button>
-        
-        {/* 导出文件夹按钮 */}
-        {selectedFolder && (
-          <button
-            onClick={exportCurrentFolder}
-            disabled={isExportingFolder}
-            className="w-full flex flex-col items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <div className="flex items-center gap-2">
-              <FolderDown className="w-4 h-4" />
-              <span>
-                {isExportingFolder 
-                  ? `打包文件夹... ${folderExportProgress}%` 
-                  : '导出当前文件夹'
-                }
-              </span>
-            </div>
-            {isExportingFolder && (
-              <div className="w-full bg-gray-300 dark:bg-gray-600 rounded-full h-1.5 mt-1">
-                <div
-                  className="bg-gray-700 dark:bg-gray-300 h-1.5 rounded-full transition-all duration-300"
-                  style={{ width: `${folderExportProgress}%` }}
-                />
-              </div>
-            )}
-          </button>
-        )}
       </div>
       )}
     </div>

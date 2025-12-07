@@ -8,15 +8,18 @@ import { imageAPI } from '../api';
 function FileViewer({ file, libraryId, onClose }) {
   if (!file) return null;
 
-  const fileType = file.file_type || 'image';
+  // 兼容前端的 fileType 字段和旧的 file_type 字段
+  const fileType = file.fileType || file.file_type || 'image';
   const originalUrl = imageAPI.getOriginalUrl(libraryId, file.path);
 
-  // 在系统默认应用中打开
+  // 在浏览器中打开原始文件（交给浏览器/系统处理）
   const openInSystem = async () => {
     try {
-      await imageAPI.openInExplorer(libraryId, file.path);
+      if (originalUrl) {
+        window.open(originalUrl, '_blank');
+      }
     } catch (error) {
-      console.error('Failed to open file:', error);
+      console.error('Failed to open file in browser:', error);
     }
   };
 
