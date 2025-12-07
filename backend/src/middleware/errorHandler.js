@@ -60,7 +60,9 @@ const errorHandler = (err, req, res, next) => {
       error: {
         code: err.code,
         message: err.message,
-        ...(err.field && { field: err.field })
+        ...(err.field && { field: err.field }),
+        ...(err.remainingAttempts !== undefined && { remainingAttempts: err.remainingAttempts }),
+        ...(err.currentAttempts !== undefined && { currentAttempts: err.currentAttempts })
       }
     });
   }

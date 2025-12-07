@@ -62,8 +62,11 @@ const io = new Server(server, {
 // 准备依赖注入
 // 包装 config 函数为对象接口
 const configManager = {
+  // 兼容两种命名风格
   load: () => config.loadConfig(),
   save: (data) => config.saveConfig(data),
+  loadConfig: () => config.loadConfig(),
+  saveConfig: (data) => config.saveConfig(data),
   addLibrary: (name, path) => config.addLibrary(name, path),
   removeLibrary: (id) => config.removeLibrary(id),
   updateLibrary: (id, updates) => config.updateLibrary(id, updates),

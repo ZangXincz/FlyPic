@@ -617,9 +617,9 @@ function ImageWaterfall() {
       imageAPI.getFolders(currentLibraryId)
     ]).then(([restoreResult, foldersRes]) => {
       // 检查恢复结果
-      if (restoreResult.data.failed.length > 0) {
-        console.warn(`⚠️ 恢复失败: ${restoreResult.data.failed.length} 个文件`);
-        const errorMsg = restoreResult.data.failed[0].error || '未知错误';
+      if (restoreResult.failed.length > 0) {
+        console.warn(`⚠️ 恢复失败: ${restoreResult.failed.length} 个文件`);
+        const errorMsg = restoreResult.failed[0].error || '未知错误';
         
         // 失败时回滚UI
         setUndoHistory(undoHistory);
@@ -757,8 +757,8 @@ function ImageWaterfall() {
       imageAPI.getFolders(currentLibraryId)
     ]).then(([deleteResult, foldersRes]) => {
       // 检查是否有失败的项
-      if (deleteResult.data.failed.length > 0) {
-        console.warn(`⚠️ 删除失败: ${deleteResult.data.failed.length} 个文件`, deleteResult.data.failed);
+      if (deleteResult.failed.length > 0) {
+        console.warn(`⚠️ 删除失败: ${deleteResult.failed.length} 个文件`, deleteResult.failed);
         // 如果有失败，回滚UI
         setImages(images);
         setUndoHistory(undoHistory);
@@ -1053,8 +1053,8 @@ function ImageWaterfall() {
         const result = await fileAPI.copy(currentLibraryId, items, targetFolder, conflictAction);
         
         // 处理结果
-        const successCount = result.data.success?.length || 0;
-        const failedCount = result.data.failed?.length || 0;
+        const successCount = result.success?.length || 0;
+        const failedCount = result.failed?.length || 0;
         
         if (failedCount > 0) {
           // 有失败的项，更新Toast提示
@@ -1062,7 +1062,7 @@ function ImageWaterfall() {
             isVisible: true,
             message: successCount > 0 
               ? `已粘贴 ${successCount} 个文件，${failedCount} 个失败`
-              : `粘贴失败: ${result.data.failed[0].error}`,
+              : `粘贴失败: ${result.failed[0].error}`,
             count: successCount
           });
           
@@ -1127,11 +1127,11 @@ function ImageWaterfall() {
         );
         
         // 上传完成
-        setUploadProgress({ isUploading: false, percent: 100, current: result.data.success.length, total: pendingUpload.files.length });
+        setUploadProgress({ isUploading: false, percent: 100, current: result.success.length, total: pendingUpload.files.length });
         
         // 显示结果提示
-        const successCount = result.data.success?.length || 0;
-        const failedCount = result.data.failed?.length || 0;
+        const successCount = result.success?.length || 0;
+        const failedCount = result.failed?.length || 0;
         
         let message = `上传完成: 成功 ${successCount} 个`;
         if (failedCount > 0) message += `, 失败 ${failedCount} 个`;
@@ -1262,10 +1262,10 @@ function ImageWaterfall() {
       );
 
       // 上传完成
-      setUploadProgress({ isUploading: false, percent: 100, current: result.data.success.length, total: files.length });
+      setUploadProgress({ isUploading: false, percent: 100, current: result.success.length, total: files.length });
 
       // 检查是否有冲突
-      const conflicts = result.data.conflicts || [];
+      const conflicts = result.conflicts || [];
       if (conflicts.length > 0) {
         // 有冲突，显示冲突对话框
         console.log(`⚠️ 检测到 ${conflicts.length} 个文件冲突`);
@@ -1285,8 +1285,8 @@ function ImageWaterfall() {
       }
 
       // 显示结果提示
-      const successCount = result.data.success?.length || 0;
-      const failedCount = result.data.failed?.length || 0;
+      const successCount = result.success?.length || 0;
+      const failedCount = result.failed?.length || 0;
 
       let message = `上传完成: 成功 ${successCount} 个`;
       if (failedCount > 0) message += `, 失败 ${failedCount} 个`;
@@ -1371,8 +1371,8 @@ function ImageWaterfall() {
       const result = await fileAPI.rename(currentLibraryId, renamingImage.path, newFilename);
       
       // 更新图片信息
-      const newPath = result.data.newPath;
-      const actualNewName = result.data.newName;
+      const newPath = result.newPath;
+      const actualNewName = result.newName;
       updateImage(renamingImage.path, {
         path: newPath,
         filename: actualNewName

@@ -286,13 +286,13 @@ function Sidebar() {
       imageAPI.getFolders(currentLibraryId)
     ]).then(([deleteResult, foldersRes]) => {
       const { setFolders } = useImageStore.getState();
-      if (deleteResult.data.failed.length > 0) {
-        console.warn(`⚠️ 删除失败:`, deleteResult.data.failed);
+      if (deleteResult.failed.length > 0) {
+        console.warn(`⚠️ 删除失败:`, deleteResult.failed);
         // 失败时回滚
         setUndoHistory(undoHistory);
         setUndoToast({ isVisible: false, message: '', count: 0 });
         setFolders(foldersRes.folders);
-        alert('删除失败: ' + deleteResult.data.failed[0].error);
+        alert('删除失败: ' + deleteResult.failed[0].error);
       } else {
         // 成功时刷新文件夹列表以确保同步
         setFolders(foldersRes.folders);
@@ -351,9 +351,9 @@ function Sidebar() {
     ]).then(([restoreResult, foldersRes]) => {
       const { setFolders } = useImageStore.getState();
       // 检查恢复结果
-      if (restoreResult.data.failed.length > 0) {
-        console.warn(`⚠️ 恢复失败: ${restoreResult.data.failed.length} 个文件`);
-        const errorMsg = restoreResult.data.failed[0].error || '未知错误';
+      if (restoreResult.failed.length > 0) {
+        console.warn(`⚠️ 恢复失败: ${restoreResult.failed.length} 个文件`);
+        const errorMsg = restoreResult.failed[0].error || '未知错误';
         
         // 失败时回滚
         setUndoHistory(undoHistory);
@@ -523,7 +523,7 @@ function Sidebar() {
     try {
       // 调用重命名API
       const result = await fileAPI.rename(currentLibraryId, oldPath, newName);
-      const newPath = result.data.newPath;
+      const newPath = result.newPath;
       
       console.log(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
       

@@ -7,12 +7,14 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { errorHandler } = require('./middleware/errorHandler');
+const { createAuthMiddleware } = require('./middleware/authMiddleware');
 
 // 导入服务
 const LibraryService = require('./services/LibraryService');
 const ImageService = require('./services/ImageService');
 const ScanService = require('./services/ScanService');
 const FileService = require('./services/FileService');
+const AuthService = require('./services/AuthService');
 
 /**
  * 创建 Express 应用
@@ -34,6 +36,8 @@ function createApp(dependencies) {
   app.use(express.json());
 
   // 初始化服务
+  const authService = new AuthService(configManager);
+
   const libraryService = new LibraryService(
     configManager,
     dbPool,
@@ -60,18 +64,27 @@ function createApp(dependencies) {
   // 将服务和依赖注入到 app 中，供路由使用
   app.set('configManager', configManager);
   app.set('dbPool', dbPool);
+  app.set('authService', authService);
   app.set('libraryService', libraryService);
   app.set('imageService', imageService);
   app.set('scanService', scanService);
   app.set('fileService', fileService);
 
+  // 认证中间件（仅作用于 /api 路由，避免拦截前端静态页面）
+  app.use('/api', createAuthMiddleware(
+    () => authService.getPasswordHash(),
+    () => authService.getJwtSecret()
+  ));
+
   // API 路由
+  const authRouter = require('./routes/auth');
   const libraryRouter = require('./routes/library');
   const imageRouter = require('./routes/image');
   const scanRouter = require('./routes/scan');
   const fileRouter = require('./routes/file');
   const uploadRouter = require('./routes/upload');
 
+  app.use('/api/auth', authRouter);
   app.use('/api/library', libraryRouter);
   app.use('/api/image', imageRouter);
   app.use('/api/scan', scanRouter);

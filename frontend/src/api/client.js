@@ -18,14 +18,40 @@ class APIError extends Error {
 }
 
 /**
+ * 获取存储的 Token
+ */
+function getToken() {
+  return localStorage.getItem('flypic_token');
+}
+
+/**
+ * 设置 Token
+ */
+function setToken(token) {
+  if (token) {
+    localStorage.setItem('flypic_token', token);
+  } else {
+    localStorage.removeItem('flypic_token');
+  }
+}
+
+/**
  * 发送请求
  */
 async function request(url, options = {}) {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+
+  // 自动添加 Authorization header
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const config = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    },
+    headers,
     ...options
   };
 
@@ -34,6 +60,18 @@ async function request(url, options = {}) {
     const data = await response.json();
 
     if (!response.ok) {
+      // 401 未授权处理
+      if (response.status === 401) {
+        // 对于认证检查接口，不触发登出事件（避免循环）
+        const isAuthCheck = url.includes('/auth/status');
+        
+        if (!isAuthCheck) {
+          setToken(null);
+          // 触发登录页面（由 AuthWrapper 处理）
+          window.dispatchEvent(new Event('auth:unauthorized'));
+        }
+      }
+
       throw new APIError(
         data.error?.message || data.error || 'Request failed',
         response.status,
@@ -87,6 +125,17 @@ function put(url, body, options = {}) {
 }
 
 /**
+ * PATCH 请求
+ */
+function patch(url, body, options = {}) {
+  return request(url, { 
+    method: 'PATCH', 
+    body: JSON.stringify(body),
+    ...options 
+  });
+}
+
+/**
  * DELETE 请求
  */
 function del(url, options = {}) {
@@ -97,7 +146,8 @@ export const api = {
   get,
   post,
   put,
+  patch,
   delete: del
 };
 
-export { APIError };
+export { APIError, getToken, setToken };

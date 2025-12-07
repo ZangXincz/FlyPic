@@ -2,9 +2,10 @@
  * 文件操作 API 客户端
  */
 
+import { api, getToken } from './client';
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:15002';
+const API_BASE = '/api';
 
 export const fileAPI = {
   /**
@@ -13,10 +14,10 @@ export const fileAPI = {
    * @param {Array} items - 待删除项 [{type: 'file'|'folder', path: 'path'}]
    */
   async delete(libraryId, items) {
-    const response = await axios.delete(`${API_BASE}/api/file/delete`, {
-      data: { libraryId, items }
+    return api.delete('/file/delete', {
+      body: JSON.stringify({ libraryId, items }),
+      headers: { 'Content-Type': 'application/json' }
     });
-    return response.data;
   },
 
   /**
@@ -26,12 +27,11 @@ export const fileAPI = {
    * @param {string} newName - 新名称
    */
   async rename(libraryId, path, newName) {
-    const response = await axios.patch(`${API_BASE}/api/file/rename`, {
+    return api.patch('/file/rename', {
       libraryId,
       path,
       newName
     });
-    return response.data;
   },
 
   /**
@@ -41,12 +41,11 @@ export const fileAPI = {
    * @param {string} targetFolder - 目标文件夹路径
    */
   async move(libraryId, items, targetFolder) {
-    const response = await axios.post(`${API_BASE}/api/file/move`, {
+    return api.post('/file/move', {
       libraryId,
       items,
       targetFolder
     });
-    return response.data;
   },
 
   /**
@@ -57,13 +56,12 @@ export const fileAPI = {
    * @param {string} conflictAction - 冲突处理方式: 'skip'|'replace'|'rename'
    */
   async copy(libraryId, items, targetFolder, conflictAction = 'rename') {
-    const response = await axios.post(`${API_BASE}/api/file/copy`, {
+    return api.post('/file/copy', {
       libraryId,
       items,
       targetFolder,
       conflictAction
     });
-    return response.data;
   },
 
   /**
@@ -73,12 +71,11 @@ export const fileAPI = {
    * @param {Object} metadata - 元数据 {rating?, favorite?, tags?}
    */
   async updateMetadata(libraryId, path, metadata) {
-    const response = await axios.patch(`${API_BASE}/api/file/metadata`, {
+    return api.patch('/file/metadata', {
       libraryId,
       path,
       ...metadata
     });
-    return response.data;
   },
 
   /**
@@ -87,11 +84,10 @@ export const fileAPI = {
    * @param {Array} items - 待恢复项 [{type: 'file'|'folder', path: 'path'}]
    */
   async restore(libraryId, items) {
-    const response = await axios.post(`${API_BASE}/api/file/restore`, {
+    return api.post('/file/restore', {
       libraryId,
       items
     });
-    return response.data;
   },
 
   /**
@@ -100,11 +96,10 @@ export const fileAPI = {
    * @param {string} folderPath - 文件夹路径
    */
   async createFolder(libraryId, folderPath) {
-    const response = await axios.post(`${API_BASE}/api/file/create-folder`, {
+    return api.post('/file/create-folder', {
       libraryId,
       folderPath
     });
-    return response.data;
   },
 
   /**
@@ -130,10 +125,15 @@ export const fileAPI = {
       formData.append('files', file);
     }
 
-    const response = await axios.post(`${API_BASE}/api/upload`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
+    // 使用 Axios 处理上传（支持进度回调），手动添加 Authorization 头
+    const token = getToken();
+    const headers = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await axios.post(`${API_BASE}/upload`, formData, {
+      headers,
       onUploadProgress: onProgress
     });
     return response.data;
