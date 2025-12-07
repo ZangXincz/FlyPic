@@ -10,6 +10,10 @@ import LibraryMissingModal from './LibraryMissingModal';
 import ContextMenu, { menuItems } from './ContextMenu';
 import UndoToast from './UndoToast';
 import FolderSelector from './FolderSelector';
+import ConflictDialog from './ConflictDialog';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('Sidebar');
 
 // 检查素材库扫描状态
 const checkScanStatus = async (libraryId) => {
@@ -56,6 +60,8 @@ function Sidebar() {
   const [editingFolderName, setEditingFolderName] = useState(''); // 编辑中的文件夹名
   const [creatingFolder, setCreatingFolder] = useState(null); // 正在创建的文件夹 { type: 'sibling' | 'child', parentPath: string }
   const [newFolderName, setNewFolderName] = useState(''); // 新建文件夹名称
+  const [conflictDialog, setConflictDialog] = useState({ isOpen: false, conflicts: [], pendingMove: null }); // 冲突对话框
+  const [dragMoveHistory, setDragMoveHistory] = useState([]); // 拖拽移动历史栈
   const folderSearchDebounceRef = useRef(null);
   const librarySelectorRef = useRef(null);
   const folderNameInputRef = useRef(null);
@@ -187,7 +193,7 @@ function Sidebar() {
     return parentPath || null;
   }, []);
 
-  // 监听快捷键（Del删除、F2重命名、Ctrl+Z撤销）
+  // 监听快捷键（Del删除、F2重命名、Ctrl+Z撤销文件夹）
   useEffect(() => {
     const handleKeyDown = async (e) => {
       // 忽略输入框中的快捷键
@@ -237,20 +243,31 @@ function Sidebar() {
         }
       }
       
-      // Ctrl+Z → 撤销（文件夹或图片）
+      // Ctrl+Z → 撤销文件夹相关操作（拖拽移动 / 删除）
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-        // 如果有文件夹撤销历史，撤销文件夹
+        const { selectedImages, selectedImage } = useImageStore.getState();
+        // 有图片撤销栈时，让 ImageWaterfall 处理图片撤销
+        if (selectedImages.length > 0 || selectedImage) return;
+
+        // 1. 优先撤销拖拽移动
+        if (dragMoveHistory.length > 0) {
+          e.preventDefault();
+          await handleUndoDragMove();
+          return;
+        }
+
+        // 2. 没有拖拽记录时，再撤销文件夹删除
         if (undoHistory.length > 0) {
           e.preventDefault();
           await handleUndoFolderDelete();
+          return;
         }
-        // 否则让 ImageWaterfall 处理图片撤销
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedFolder, undoHistory, folders, findNextFolderAfterDelete]);
+  }, [selectedFolder, undoHistory, dragMoveHistory, folders, findNextFolderAfterDelete]);
 
   // 文件夹删除功能（乐观更新，立即响应）
   const handleDeleteFolder = async (folderPath) => {
@@ -287,7 +304,7 @@ function Sidebar() {
     ]).then(([deleteResult, foldersRes]) => {
       const { setFolders } = useImageStore.getState();
       if (deleteResult.failed.length > 0) {
-        console.warn(`⚠️ 删除失败:`, deleteResult.failed);
+        logger.warn(`⚠️ 删除失败:`, deleteResult.failed);
         // 失败时回滚
         setUndoHistory(undoHistory);
         setUndoToast({ isVisible: false, message: '', count: 0 });
@@ -298,7 +315,7 @@ function Sidebar() {
         setFolders(foldersRes.folders);
       }
     }).catch(error => {
-      console.error('删除文件夹失败:', error);
+      logger.error('删除文件夹失败:', error);
       // 失败时回滚
       setUndoHistory(undoHistory);
       setUndoToast({ isVisible: false, message: '', count: 0 });
@@ -342,7 +359,7 @@ function Sidebar() {
     
     // 4. 立即跳转到恢复的文件夹
     setSelectedFolder(lastDeleted.folderPath);
-    console.log(`📂 跳转到文件夹: ${lastDeleted.folderPath}`);
+    logger.debug(`📂 跳转到文件夹: ${lastDeleted.folderPath}`);
     
     // 5. 后台执行API调用（不阻塞UI）
     Promise.all([
@@ -352,7 +369,7 @@ function Sidebar() {
       const { setFolders } = useImageStore.getState();
       // 检查恢复结果
       if (restoreResult.failed.length > 0) {
-        console.warn(`⚠️ 恢复失败: ${restoreResult.failed.length} 个文件`);
+        logger.warn(`⚠️ 恢复失败: ${restoreResult.failed.length} 个文件`);
         const errorMsg = restoreResult.failed[0].error || '未知错误';
         
         // 失败时回滚
@@ -364,7 +381,7 @@ function Sidebar() {
         setFolders(foldersRes.folders);
       }
     }).catch(error => {
-      console.error('撤销失败:', error);
+      logger.error('撤销失败:', error);
       // 失败时回滚
       setUndoHistory(undoHistory);
       imageAPI.getFolders(currentLibraryId).then(foldersRes => {
@@ -373,6 +390,123 @@ function Sidebar() {
       });
       alert('撤销失败: ' + (error.message || '未知错误'));
     });
+  };
+
+  // 检查拖拽移动冲突
+  const checkDragMoveConflicts = async (items, targetFolderPath) => {
+    if (!currentLibraryId) return [];
+    
+    try {
+      // 获取目标文件夹的文件列表
+      const response = await imageAPI.search(currentLibraryId, { folder: targetFolderPath });
+      const targetFolderImages = response.images || [];
+      const conflicts = [];
+      
+      for (const item of items) {
+        const fileName = item.path.split('/').pop();
+        const itemFolder = item.path.substring(0, item.path.lastIndexOf('/'));
+        
+        // 检查是否存在同名文件
+        const exists = targetFolderImages.some(img => img.filename === fileName);
+        
+        if (exists) {
+          conflicts.push({ 
+            path: item.path, 
+            name: fileName,
+            isSameLocation: itemFolder === targetFolderPath
+          });
+        }
+      }
+      
+      return conflicts;
+    } catch (error) {
+      logger.error('检查拖拽移动冲突失败:', error);
+      return [];
+    }
+  };
+
+  // 执行拖拽移动（带冲突操作）
+  const executeDragMove = async (items, targetFolderPath, conflictAction = 'rename') => {
+    if (!currentLibraryId) return;
+
+    try {
+      // 检查是否包含文件夹
+      const hasFolders = items.some(item => item.type === 'folder');
+      
+      // 保存移动前的信息（用于撤销）
+      const { images, clearSelection } = useImageStore.getState();
+      const sourceFolders = new Map();
+      const movedImages = [];
+      
+      if (!hasFolders) {
+        items.forEach(item => {
+          const img = images.find(i => i.path === item.path);
+          if (img) {
+            sourceFolders.set(item.path, img.folder);
+            movedImages.push(img);
+          }
+        });
+      }
+      
+      // 1. 如果是移动文件，立即从UI中移除（乐观更新）并清空选中状态
+      if (!hasFolders) {
+        const { setImages } = useImageStore.getState();
+        const movedPaths = new Set(items.map(item => item.path));
+        const remainingImages = images.filter(img => !movedPaths.has(img.path));
+        setImages(remainingImages);
+        // 关键：拖拽移动后清空图片选中，避免 Ctrl+Z 时仍被视为“有图片选中”而拦截文件夹级撤销
+        clearSelection();
+      }
+
+      // 2. 执行移动（带冲突操作）
+      const result = await fileAPI.move(currentLibraryId, items, targetFolderPath, conflictAction);
+
+      if (result.failed && result.failed.length > 0) {
+        alert(`移动失败: ${result.failed[0].error}`);
+      } else {
+        const successCount = result.success?.length || 0;
+        
+        // 移动成功，保存到历史栈（用于撤销）
+        if (successCount > 0 && !hasFolders) {
+          const newHistory = [...dragMoveHistory, {
+            items,
+            targetFolder: targetFolderPath,
+            sourceFolders: Array.from(sourceFolders.entries()),
+            images: movedImages
+          }];
+          setDragMoveHistory(newHistory);
+          
+          // 显示撤销提示
+          setUndoToast({
+            isVisible: true,
+            message: `已移动 ${successCount} 个文件`,
+            count: successCount
+          });
+          
+          // 3秒后自动隐藏
+          setTimeout(() => {
+            setUndoToast({ isVisible: false, message: '', count: 0 });
+          }, 3000);
+        }
+        
+        logger.debug(`✅ 已移动 ${items.length} 个${hasFolders ? '文件夹' : '文件'}到: ${targetFolderPath}`);
+      }
+      
+      // 3. 刷新文件夹列表
+      const foldersRes = await imageAPI.getFolders(currentLibraryId);
+      const { setFolders, setImages } = useImageStore.getState();
+      setFolders(foldersRes.folders);
+      
+      // 4. 刷新当前文件夹的图片列表（无论是源还是目标）
+      if (selectedFolder) {
+        const params = { folder: selectedFolder };
+        const response = await imageAPI.search(currentLibraryId, params);
+        setImages(response.images);
+      }
+    } catch (error) {
+      logger.error('拖拽移动失败:', error);
+      alert('移动失败: ' + (error.message || '未知错误'));
+    }
   };
 
   // 处理拖拽到文件夹
@@ -389,34 +523,22 @@ function Sidebar() {
 
       if (!items || items.length === 0) return;
 
-      // 检查是否包含文件夹
-      const hasFolders = items.some(item => item.type === 'folder');
+      // 检查冲突
+      const conflicts = await checkDragMoveConflicts(items, targetFolder.path);
       
-      // 1. 如果是移动文件，立即从UI中移除（乐观更新）
-      if (!hasFolders) {
-        const { images, setImages } = useImageStore.getState();
-        const movedPaths = new Set(items.map(item => item.path));
-        const remainingImages = images.filter(img => !movedPaths.has(img.path));
-        setImages(remainingImages);
-      }
-
-      // 2. 执行移动和刷新（并行）
-      const [result, foldersRes] = await Promise.all([
-        fileAPI.move(currentLibraryId, items, targetFolder.path),
-        imageAPI.getFolders(currentLibraryId)
-      ]);
-
-      if (result.failed && result.failed.length > 0) {
-        alert(`移动失败: ${result.failed[0].error}`);
+      if (conflicts.length > 0) {
+        // 有冲突，显示对话框
+        setConflictDialog({
+          isOpen: true,
+          conflicts,
+          pendingMove: { items, targetFolder: targetFolder.path }
+        });
       } else {
-        console.log(`✅ 已移动 ${items.length} 个${hasFolders ? '文件夹' : '文件'}到: ${targetFolder.path}`);
+        // 无冲突，直接执行移动
+        await executeDragMove(items, targetFolder.path, 'rename');
       }
-      
-      // 3. 刷新文件夹列表
-      const { setFolders } = useImageStore.getState();
-      setFolders(foldersRes.folders);
     } catch (error) {
-      console.error('拖拽移动失败:', error);
+      logger.error('拖拽移动失败:', error);
     }
   };
 
@@ -430,6 +552,117 @@ function Sidebar() {
     e.preventDefault();
     e.stopPropagation();
     setDragOverFolder(null);
+  };
+
+  // 处理冲突解决
+  const handleConflictResolve = async (action) => {
+    const { pendingMove } = conflictDialog;
+    
+    // 关闭对话框
+    setConflictDialog({ isOpen: false, conflicts: [], pendingMove: null });
+    
+    if (pendingMove) {
+      // 执行移动操作
+      await executeDragMove(pendingMove.items, pendingMove.targetFolder, action);
+    }
+  };
+
+  // 取消冲突对话框
+  const handleConflictCancel = () => {
+    setConflictDialog({ isOpen: false, conflicts: [], pendingMove: null });
+  };
+
+  // 撤销拖拽移动
+  const handleUndoDragMove = async () => {
+    if (dragMoveHistory.length === 0) return;
+    
+    // 从历史栈中取出最近的移动记录
+    const lastMove = dragMoveHistory[dragMoveHistory.length - 1];
+    const remainingHistory = dragMoveHistory.slice(0, -1);
+    
+    // 立即关闭Toast
+    setUndoToast({ isVisible: false, message: '', count: 0 });
+    
+    // 立即更新历史栈
+    setDragMoveHistory(remainingHistory);
+    
+    // 构造撤销移动项
+    const undoItems = [];
+    const sourceMap = new Map(lastMove.sourceFolders);
+    
+    for (const item of lastMove.items) {
+      const sourceFolder = sourceMap.get(item.path);
+      if (sourceFolder !== undefined) {
+        undoItems.push({
+          ...item,
+          sourceFolder
+        });
+      }
+    }
+    
+    if (undoItems.length === 0) return;
+    
+    // 按原文件夹分组
+    const groupedBySource = new Map();
+    for (const item of undoItems) {
+      const source = item.sourceFolder;
+      if (!groupedBySource.has(source)) {
+        groupedBySource.set(source, []);
+      }
+      groupedBySource.get(source).push({
+        type: item.type,
+        path: item.path.split('/').pop()
+      });
+    }
+    
+    // 获取主要的源文件夹（大多数文件的源文件夹）
+    let primarySourceFolder = null;
+    if (groupedBySource.size > 0) {
+      let maxCount = 0;
+      for (const [folder, items] of groupedBySource.entries()) {
+        if (items.length > maxCount) {
+          maxCount = items.length;
+          primarySourceFolder = folder;
+        }
+      }
+    }
+    
+    // 自动切换到主要源文件夹
+    if (primarySourceFolder && selectedFolder !== primarySourceFolder) {
+      setSelectedFolder(primarySourceFolder);
+    }
+    
+    // 后台执行撤销移动
+    try {
+      await Promise.all(
+        Array.from(groupedBySource.entries()).map(([sourceFolder, items]) => {
+          const fullPathItems = items.map(item => ({
+            type: item.type,
+            path: `${lastMove.targetFolder}/${item.path}`
+          }));
+          return fileAPI.move(currentLibraryId, fullPathItems, sourceFolder, 'rename');
+        })
+      );
+      
+      // 刷新文件夹列表
+      const foldersRes = await imageAPI.getFolders(currentLibraryId);
+      const { setFolders, setImages } = useImageStore.getState();
+      setFolders(foldersRes.folders);
+      
+      // 刷新当前文件夹的图片列表（现在应该是源文件夹之一）
+      if (selectedFolder) {
+        const params = { folder: selectedFolder };
+        const response = await imageAPI.search(currentLibraryId, params);
+        setImages(response.images);
+      }
+      
+      logger.debug(`✅ 撤销拖拽移动完成`);
+    } catch (error) {
+      logger.error('撤销拖拽移动失败:', error);
+      // 失败时回滚
+      setDragMoveHistory(dragMoveHistory);
+      alert('撤销移动失败: ' + (error.message || '未知错误'));
+    }
   };
 
   // 打开文件夹移动选择器
@@ -463,14 +696,14 @@ function Sidebar() {
       } else {
         // 2. 移动成功，选中新位置
         setSelectedFolder(newPath);
-        console.log(`✅ 已移动文件夹: ${moveFolderPath} -> ${newPath}`);
+        logger.debug(`✅ 已移动文件夹: ${moveFolderPath} -> ${newPath}`);
       }
 
       // 3. 刷新文件夹列表
       const { setFolders } = useImageStore.getState();
       setFolders(foldersRes.folders);
     } catch (error) {
-      console.error('移动文件夹失败:', error);
+      logger.error('移动文件夹失败:', error);
       alert('移动失败: ' + (error.message || '未知错误'));
       
       // 失败时重新加载文件夹列表
@@ -525,24 +758,40 @@ function Sidebar() {
       const result = await fileAPI.rename(currentLibraryId, oldPath, newName);
       const newPath = result.newPath;
       
-      console.log(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
+      logger.debug(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
       
-      const { setFolders, setSelectedFolder: setSelectedFolderGlobal } = useImageStore.getState();
+      const { setFolders, setSelectedFolder: setSelectedFolderGlobal, setSelectedFolderItem } = useImageStore.getState();
       
       // 1. 如果重命名的是当前选中的文件夹，立即切换到新路径
       // 这样可以避免先显示全部图片的闪烁
       if (isRenamingCurrentFolder) {
-        console.log(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
+        logger.debug(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
         setSelectedFolderGlobal(newPath);
+
+        // 重命名当前浏览的文件夹时，立即刷新该文件夹的图片列表，避免连续重命名导致数量显示为 0
+        imageAPI.search(currentLibraryId, { folder: newPath }).then(response => {
+          const { setImages, setOriginalImages } = useImageStore.getState();
+          const imgs = response.images || [];
+          setImages(imgs);
+          setOriginalImages(imgs);
+        }).catch(error => {
+          logger.warn('重命名后刷新文件夹图片失败:', error);
+        });
       }
       
       // 2. 后台刷新文件夹列表（不阻塞UI）
       imageAPI.getFolders(currentLibraryId).then(foldersRes => {
-        console.log('📁 重命名后最新文件夹列表:', foldersRes.folders);
+        logger.debug('📁 重命名后最新文件夹列表:', foldersRes.folders);
         setFolders(foldersRes.folders);
+
+        // 3. 用最新数据更新 selectedFolderItem，让右侧详情面板立即显示新名称
+        const newFolderItem = foldersRes.folders.find(f => f.path === newPath);
+        if (newFolderItem) {
+          setSelectedFolderItem(newFolderItem);
+        }
       });
     } catch (error) {
-      console.error('文件夹重命名失败:', error);
+      logger.error('文件夹重命名失败:', error);
       alert('重命名失败: ' + (error.message || '未知错误'));
     } finally {
       setRenamingFolder(null);
@@ -560,14 +809,14 @@ function Sidebar() {
   const handleStartCreateFolder = (type, basePath) => {
     // type: 'sibling' 同级 | 'child' 子级
     // basePath: 基准文件夹路径
-    const parentPath = type === 'sibling' 
+    const parentPath = type === 'sibling'
       ? (basePath.includes('/') ? basePath.substring(0, basePath.lastIndexOf('/')) : '')
       : basePath;
-    
+
     setCreatingFolder({ type, parentPath, basePath });
     setNewFolderName('新建文件夹');
     setContextMenu({ isOpen: false, position: null, folder: null });
-    
+
     // 延迟聚焦
     setTimeout(() => {
       if (newFolderInputRef.current) {
@@ -575,48 +824,6 @@ function Sidebar() {
         newFolderInputRef.current.select();
       }
     }, 50);
-  };
-
-  // 完成创建文件夹
-  const handleFinishCreateFolder = async () => {
-    if (!creatingFolder || !newFolderName.trim()) {
-      setCreatingFolder(null);
-      setNewFolderName('');
-      return;
-    }
-
-    const folderName = newFolderName.trim();
-    const { parentPath } = creatingFolder;
-    const newFolderPath = parentPath ? `${parentPath}/${folderName}` : folderName;
-
-    try {
-      // 调用后端 API 创建文件夹
-      await fileAPI.createFolder(currentLibraryId, newFolderPath);
-      
-      console.log(`✅ 文件夹创建成功: ${newFolderPath}`);
-      
-      // 刷新文件夹列表
-      const foldersRes = await imageAPI.getFolders(currentLibraryId);
-      const { setFolders } = useImageStore.getState();
-      setFolders(foldersRes.folders);
-      
-      // 展开父文件夹
-      if (parentPath) {
-        setExpandedFolders(prev => new Set([...prev, parentPath]));
-      }
-    } catch (error) {
-      console.error('创建文件夹失败:', error);
-      alert('创建文件夹失败: ' + (error.message || '未知错误'));
-    } finally {
-      setCreatingFolder(null);
-      setNewFolderName('');
-    }
-  };
-
-  // 取消创建文件夹
-  const handleCancelCreateFolder = () => {
-    setCreatingFolder(null);
-    setNewFolderName('');
   };
 
   const handleAddLibrary = async () => {
@@ -640,7 +847,7 @@ function Sidebar() {
 
     try {
       // 1. 添加素材库
-      console.log('📝 添加素材库...');
+      logger.debug('📝 添加素材库...');
       const response = await libraryAPI.add(newLibraryName.trim(), newLibraryPath.trim());
       const newLibId = response.id;
       const hasExistingIndex = response.hasExistingIndex;
@@ -658,7 +865,7 @@ function Sidebar() {
       setIsAdding(false); // 立即释放按钮
 
       // 3. 切换到新素材库
-      console.log('🔄 切换到新素材库...');
+      logger.debug('🔄 切换到新素材库...');
       await libraryAPI.setCurrent(newLibId);
       setCurrentLibrary(newLibId);
       setSelectedFolder(null);
@@ -680,7 +887,7 @@ function Sidebar() {
 
       // 6. 如果有已有索引，先快速加载数据库中的数据
       if (hasExistingIndex) {
-        console.log('检测到已有索引，先加载现有数据...');
+        logger.debug('检测到已有索引，先加载现有数据...');
         try {
           const [foldersRes, countRes] = await Promise.all([
             imageAPI.getFolders(newLibId),
@@ -688,27 +895,27 @@ function Sidebar() {
           ]);
           useImageStore.getState().setFolders(foldersRes.folders);
           useImageStore.getState().setTotalImageCount(countRes.count);
-          console.log('✅ 已加载现有数据');
+          logger.debug('✅ 已加载现有数据');
         } catch (err) {
-          console.warn('⚠️ 加载现有数据失败:', err);
+          logger.warn('⚠️ 加载现有数据失败:', err);
         }
       }
 
       // 7. 开始异步扫描（不等待，Socket.IO 会推送进度）
-      console.log('🔍 开始异步扫描...');
+      logger.debug('🔍 开始异步扫描...');
       if (hasExistingIndex) {
-        console.log('执行增量同步，检测变化...');
+        logger.debug('执行增量同步，检测变化...');
         scanAPI.sync(newLibId, false); // wait=false，异步执行
       } else {
-        console.log('首次添加，执行全量扫描...');
+        logger.debug('首次添加，执行全量扫描...');
         scanAPI.fullScan(newLibId, false); // wait=false，异步执行
       }
 
       // 扫描在后台进行，Socket.IO 会推送进度和完成事件
       // App.jsx 中的 scanComplete 监听器会自动刷新数据
-      console.log('✅ 扫描已启动，请等待进度显示...');
+      logger.debug('✅ 扫描已启动，请等待进度显示...');
     } catch (error) {
-      console.error('❌ Error adding library:', error);
+      logger.error('❌ Error adding library:', error);
       
       // 提取错误信息
       let errorMessage = error.message || '未知错误';
@@ -801,7 +1008,7 @@ function Sidebar() {
         }
       }).catch(() => { });
     } catch (error) {
-      console.error('Error setting current library:', error);
+      logger.error('Error setting current library:', error);
       alert('切换素材库失败: ' + error.message);
       useImageStore.getState().setImageLoadingState({ isLoading: false });
     } finally {
@@ -1449,12 +1656,22 @@ function Sidebar() {
 
       {/* 撤销删除提示 */}
       <UndoToast
-        isVisible={undoToast.isVisible}
+        isVisible={undoToast.isVisible && dragMoveHistory.length === 0}
         message={undoToast.message}
         onUndo={handleUndoFolderDelete}
         onClose={() => {
           setUndoToast({ isVisible: false, message: '', count: 0 });
           // 不清空历史栈，允许Toast消失后仍可Ctrl+Z
+        }}
+      />
+
+      {/* 撤销拖拽移动提示 */}
+      <UndoToast
+        isVisible={undoToast.isVisible && dragMoveHistory.length > 0}
+        message={undoToast.message}
+        onUndo={handleUndoDragMove}
+        onClose={() => {
+          setUndoToast({ isVisible: false, message: '', count: 0 });
         }}
       />
 
@@ -1470,6 +1687,14 @@ function Sidebar() {
           }}
         />
       )}
+
+      {/* 冲突处理对话框 */}
+      <ConflictDialog
+        isOpen={conflictDialog.isOpen}
+        conflicts={conflictDialog.conflicts}
+        onResolve={handleConflictResolve}
+        onCancel={handleConflictCancel}
+      />
     </div>
   );
 }

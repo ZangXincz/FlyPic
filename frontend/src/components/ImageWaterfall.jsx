@@ -1,15 +1,38 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+/**
+ * 图片瀑布流组件 - 重构版
+ * 从 1880 行精简到 ~300 行，通过提取 hooks 和组件实现
+ */
+
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { PhotoProvider } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
 import { VariableSizeList as List } from 'react-window';
-import { Play, FileText, Palette, Music, File } from 'lucide-react';
+
+// Stores
 import { useLibraryStore } from '../stores/useLibraryStore';
 import { useImageStore } from '../stores/useImageStore';
-import { useUIStore } from '../stores/useUIStore';
-import { useScanStore } from '../stores/useScanStore';
-import { useClipboardStore } from '../stores/useClipboardStore';
-import { imageAPI, fileAPI } from '../api';
-import requestManager, { RequestType } from '../services/requestManager';
+
+// Custom Hooks
+import { useWaterfallLayout } from '../hooks/useWaterfallLayout';
+import { useImageDelete } from '../hooks/useImageDelete';
+import { useConflictHandler } from '../hooks/useConflictHandler';
+import { useImageClipboard } from '../hooks/useImageClipboard';
+import { useImageMove } from '../hooks/useImageMove';
+import { useImageRename } from '../hooks/useImageRename';
+import { useImageRating } from '../hooks/useImageRating';
+import { useImageUpload } from '../hooks/useImageUpload';
+import { useImageKeyboard } from '../hooks/useImageKeyboard';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
+
+// Utils
+import { filterImages } from '../utils/imageFilters';
+import { imageAPI } from '../api';
+
+// Components
+import ImageCell from './ImageCell';
+import DragDropOverlay from './DragDropOverlay';
+import UploadProgress from './UploadProgress';
+import EmptyState from './EmptyState';
 import FileViewer from './FileViewer';
 import ContextMenu, { menuItems } from './ContextMenu';
 import UndoToast from './UndoToast';
@@ -17,774 +40,245 @@ import RatingToast from './RatingToast';
 import FolderSelector from './FolderSelector';
 import ConflictDialog from './ConflictDialog';
 
-// 虚拟滚动阈值：超过此数量启用虚拟滚动
-const VIRTUAL_SCROLL_THRESHOLD = 100;
-
-// 解析大小字符串为 KB
-const parseSizeToKB = (sizeStr) => {
-  const match = sizeStr.match(/^(\d+(?:\.\d+)?)(B|KB|MB|GB)$/);
-  if (!match) return 0;
-  const value = parseFloat(match[1]);
-  const unit = match[2];
-  switch (unit) {
-    case 'B': return value / 1024;
-    case 'KB': return value;
-    case 'MB': return value * 1024;
-    case 'GB': return value * 1024 * 1024;
-    default: return 0;
-  }
-};
-
-// 匹配大小范围
-const matchSizeRange = (sizeKB, range) => {
-  if (range.startsWith('>')) {
-    const minStr = range.substring(1).trim();
-    const minKB = parseSizeToKB(minStr);
-    return sizeKB >= minKB;
-  } else if (range.includes(' - ')) {
-    const [minStr, maxStr] = range.split(' - ').map(s => s.trim());
-    const minKB = parseSizeToKB(minStr);
-    const maxKB = parseSizeToKB(maxStr);
-    return sizeKB >= minKB && sizeKB < maxKB;
-  }
-  return false;
-};
+// 虚拟滚动阈值
+const VIRTUAL_SCROLL_THRESHOLD = 50;
 
 // 加载配置
 const LOAD_CONFIG = {
-  pageSize: 100,           // 每次加载 100 张（更轻量）
-  preloadThreshold: 300,   // 距离边界 300px 时预加载
-  overscanCount: 4,        // 预渲染 4 行（减少内存）
+  overscanCount: 4, // 预渲染 4 行
 };
 
 function ImageWaterfall() {
   const { currentLibraryId } = useLibraryStore();
   const { 
     images, selectedImage, setSelectedImage, selectedImages, setSelectedImages, 
-    toggleImageSelection, clearSelection, imageLoadingState, selectedFolder, setSelectedFolder,
-    searchKeywords, filters, appendImages, setImageLoadingState, setImages, folders, setFolders,
-    renamingImage, setRenamingImage, updateImage, setSelectedFolderItem
+    toggleImageSelection, clearSelection, imageLoadingState, selectedFolder,
+    searchKeywords, filters, folders, setSelectedFolderItem
   } = useImageStore();
-  
-  const { thumbnailHeight, isResizingPanels } = useUIStore();
-  
-  // 前端筛选逻辑：基于 filters 过滤图片
-  const filteredImages = useMemo(() => {
-    const { formats, sizes, orientations, ratings } = filters;
-    
-    // 如果没有任何筛选条件，直接返回原始图片
-    if ((!formats || formats.length === 0) && 
-        (!sizes || sizes.length === 0) && 
-        (!orientations || orientations.length === 0) &&
-        (!ratings || ratings.length === 0)) {
-      return images;
-    }
 
-    return images.filter(img => {
-      // 格式筛选
-      if (formats && formats.length > 0) {
-        if (!formats.includes(img.format?.toLowerCase())) {
-          return false;
-        }
-      }
-
-      // 文件大小筛选
-      if (sizes && sizes.length > 0) {
-        const sizeKB = img.size / 1024;
-        let matchesSize = false;
-        
-        for (const range of sizes) {
-          if (matchSizeRange(sizeKB, range)) {
-            matchesSize = true;
-            break;
-          }
-        }
-        
-        if (!matchesSize) return false;
-      }
-
-      // 方向筛选（多选）
-      if (orientations && orientations.length > 0) {
-        const aspectRatio = img.width / img.height;
-        let matchesOrientation = false;
-        
-        for (const orientation of orientations) {
-          if (orientation === 'horizontal' && aspectRatio > 1.05) {
-            matchesOrientation = true;
-            break;
-          } else if (orientation === 'vertical' && aspectRatio < 0.95) {
-            matchesOrientation = true;
-            break;
-          } else if (orientation === 'square' && aspectRatio >= 0.95 && aspectRatio <= 1.05) {
-            matchesOrientation = true;
-            break;
-          }
-        }
-        
-        if (!matchesOrientation) return false;
-      }
-
-      // 评分筛选（多选）
-      if (ratings && ratings.length > 0) {
-        const imgRating = img.rating || 0;
-        if (!ratings.includes(imgRating)) return false;
-      }
-
-      return true;
-    });
-  }, [images, filters]);
-  const containerRef = useRef(null);
-  const listRef = useRef(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [containerHeight, setContainerHeight] = useState(0);
+  // 状态
   const [photoIndex, setPhotoIndex] = useState(-1);
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
   const [viewerFile, setViewerFile] = useState(null);
   const [contextMenu, setContextMenu] = useState({ isOpen: false, position: null, image: null });
-  const [undoToast, setUndoToast] = useState({ isVisible: false, message: '', count: 0 });
-  const [undoHistory, setUndoHistory] = useState([]); // 撤销历史栈，支持多次撤销
-  const [ratingToast, setRatingToast] = useState({ isVisible: false, rating: 0, count: 0 }); // 评分提醒
-  const [showFolderSelector, setShowFolderSelector] = useState(false); // 显示文件夹选择器
-  const [moveItems, setMoveItems] = useState([]); // 待移动的项
-  const [editingFilename, setEditingFilename] = useState(''); // 编辑中的文件名
-  const editInputRef = useRef(null); // 编辑输入框引用
-  const [conflictDialog, setConflictDialog] = useState({ isOpen: false, conflicts: [], pendingPaste: null, pendingUpload: null }); // 冲突对话框
-  const [isDraggingOver, setIsDraggingOver] = useState(false); // 拖拽悬停状态
-  const [uploadProgress, setUploadProgress] = useState({ isUploading: false, percent: 0, current: 0, total: 0 }); // 上传进度
-  
-  // 剪贴板状态
-  const { copyToClipboard, getClipboard, hasClipboard } = useClipboardStore();
+  // 统一图片移动/删除撤销顺序的栈：按操作时间顺序记录 'move' | 'delete'
+  const [undoStack, setUndoStack] = useState([]);
+  const listRef = useRef(null);
+  const prevRowCountRef = useRef(0);
 
-  // 监听文件夹切换，切换时关闭Toast
-  useEffect(() => {
-    // 文件夹切换时立即关闭Toast，避免重新计时
-    setUndoToast({ isVisible: false, message: '', count: 0 });
-  }, [selectedFolder]);
+  // 前端筛选
+  const filteredImages = useMemo(() => {
+    return filterImages(images, filters);
+  }, [images, filters]);
 
-  // 全局阻止浏览器默认的拖放行为（防止浏览器打开文件）
-  useEffect(() => {
-    const preventDefaults = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
+  // 瀑布流布局
+  const { rows, flatImages, containerRef, containerWidth, containerHeight, getRowHeight } = 
+    useWaterfallLayout(filteredImages);
 
-    // 阻止整个文档的默认拖放行为
-    document.addEventListener('dragover', preventDefaults);
-    document.addEventListener('drop', preventDefaults);
+  // 删除和撤销
+  const { undoHistory, undoToast, setUndoToast, handleQuickDelete, handleUndo } = 
+    useImageDelete();
 
-    return () => {
-      document.removeEventListener('dragover', preventDefaults);
-      document.removeEventListener('drop', preventDefaults);
-    };
-  }, []);
+  // 统一冲突处理
+  const { conflictDialog, showConflictDialog, hideConflictDialog, resolveConflict } = 
+    useConflictHandler();
 
-  // 全局快捷键监听 - Del 键删除, Ctrl+Z 撤销, F2/Enter 重命名, Ctrl+C 复制, Ctrl+V 粘贴
-  useEffect(() => {
-    const handleGlobalKeyDown = async (e) => {
-      // 忽略输入框中的快捷键
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      
-      // Ctrl+C → 复制
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-        if (selectedImages.length > 0 || selectedImage) {
-          e.preventDefault();
-          handleCopy();
-        }
-        return;
-      }
-      
-      // Ctrl+V → 粘贴
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-        if (hasClipboard() && selectedFolder) {
-          e.preventDefault();
-          await handlePaste();
-        }
-        return;
-      }
-      
-      // Ctrl+Z → 撤销
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-        e.preventDefault();
-        if (undoHistory.length > 0) {
-          await handleUndo();
-        }
-        return;
-      }
-      
-      // F2 或 Enter → 重命名（仅单选时）
-      if ((e.key === 'F2' || e.key === 'Enter') && selectedImage && selectedImages.length === 0) {
-        e.preventDefault();
-        handleStartRename(selectedImage);
-        return;
-      }
-      
-      // Del 键 → 直接移入回收站
-      if (e.key === 'Delete') {
-        if (selectedImages.length > 0 || selectedImage) {
-          e.preventDefault();
-          await handleQuickDelete();
-        }
-        return;
-      }
-      
-      // 数字键 1-5 → 快速评分
-      if (['1', '2', '3', '4', '5'].includes(e.key)) {
-        if (selectedImages.length > 0 || selectedImage) {
-          e.preventDefault();
-          const rating = parseInt(e.key);
-          await handleQuickRating(rating);
-        }
-        return;
-      }
-      
-      // 数字键 0 → 取消评分
-      if (e.key === '0') {
-        if (selectedImages.length > 0 || selectedImage) {
-          e.preventDefault();
-          await handleQuickRating(0);
-        }
-        return;
-      }
-    };
+  // 剪贴板操作
+  const { handleCopy, handlePaste, executePaste } = 
+    useImageClipboard(showConflictDialog);
 
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [selectedImages, selectedImage, images, currentLibraryId, undoHistory, selectedFolder, hasClipboard]);
+  // 移动功能
+  const { 
+    showFolderSelector, moveItems, handleMoveClick, handleMove, handleCancelMove, executeMove,
+    undoHistory: moveUndoHistory, undoToast: moveUndoToast, setUndoToast: setMoveUndoToast, handleUndoMove
+  } = useImageMove(showConflictDialog);
 
-  // 简单的向下无限滚动加载
-  const loadMoreImages = useCallback(async () => {
-    if (!currentLibraryId || !imageLoadingState.hasMore || imageLoadingState.isLoading) {
-      return;
-    }
+  // 重命名
+  const { 
+    renamingImage, 
+    editingFilename, 
+    editInputRef, 
+    setEditingFilename, 
+    handleStartRename, 
+    handleFinishRename, 
+    handleCancelRename 
+  } = useImageRename();
 
-    const requestContext = requestManager.createRequest(RequestType.IMAGES);
-    setImageLoadingState({ isLoading: true });
+  // 评分
+  const { ratingToast, setRatingToast, handleQuickRating } = useImageRating();
 
-    try {
-      const params = { 
-        offset: images.length,
-        limit: LOAD_CONFIG.pageSize 
-      };
-      if (selectedFolder) params.folder = selectedFolder;
-      if (searchKeywords) params.keywords = searchKeywords;
-      if (filters.formats?.length > 0) params.formats = filters.formats.join(',');
+  // 上传
+  const { 
+    isDraggingOver, 
+    uploadProgress, 
+    handleDragEnter, 
+    handleDragOver, 
+    handleDragLeave, 
+    handleDrop: baseHandleDrop,
+    uploadWithConflictAction
+  } = useImageUpload();
 
-      const response = await imageAPI.search(currentLibraryId, params, {
-        signal: requestContext.signal
+  // 无限滚动
+  const { loadMoreImages, preloadThreshold } = useInfiniteScroll();
+
+  // 带撤销栈的删除
+  const handleQuickDeleteWithUndoStack = useCallback(async () => {
+    await handleQuickDelete();
+    setUndoStack(prev => [...prev, 'delete']);
+  }, [handleQuickDelete]);
+
+  // 带撤销栈的移动（通过文件夹选择器触发）
+  const handleMoveWithUndoStack = useCallback(async (targetFolder) => {
+    await handleMove(targetFolder);
+    setUndoStack(prev => [...prev, 'move']);
+  }, [handleMove]);
+
+  // 键盘快捷键（Ctrl+Z 按照 undoStack 顺序一步步撤销）
+  useImageKeyboard({
+    onDelete: handleQuickDeleteWithUndoStack,
+    onUndo: async () => {
+      console.log('🔍 撤销前状态:', {
+        undoStack: [...undoStack],
+        moveUndoHistory: moveUndoHistory.length,
+        deleteUndoHistory: undoHistory.length
       });
-
-      if (!requestManager.isValid(requestContext.id)) {
-        return;
-      }
-
-      const { images: newImages, total, hasMore } = response;
-      requestManager.complete(requestContext.id);
-
-      appendImages(newImages);
-      setImageLoadingState({
-        isLoading: false,
-        loadedCount: images.length + newImages.length,
-        totalCount: total,
-        hasMore: hasMore || false,
-      });
-    } catch (error) {
-      if (error.name === 'CanceledError' || error.name === 'AbortError') {
-        return;
-      }
-      console.error('Error loading more images:', error);
-      requestManager.error(requestContext.id);
-      setImageLoadingState({ isLoading: false });
-    }
-  }, [currentLibraryId, imageLoadingState, images.length, selectedFolder, searchKeywords, filters, appendImages, setImageLoadingState]);
-
-  // 监听容器宽度变化（使用 ResizeObserver + 去抖/阈值抑制）
-  useEffect(() => {
-    let resizeObserver = null;
-    let retryCount = 0;
-    const maxRetries = 10;
-
-    // 使用 ref 记录上次宽度，避免频繁 setState
-    const lastWidthRef = { current: 0 };
-    let debounceTimer = null;
-
-    const emitSize = (width, height) => {
-      // 仅当差异超过阈值时更新，减少重算次数
-      const threshold = 12; // px
-      if (Math.abs(width - lastWidthRef.current) < threshold) return true;
-
-      lastWidthRef.current = width;
-
-      // 去抖：在一小段静止后再更新（拖动时降低重算频率）
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        setContainerWidth(width);
-        setContainerHeight(height);
-      }, 50);
-      return true;
-    };
-
-    const measureAndEmit = () => {
-      if (containerRef.current) {
-        // 预留 padding：与现有布局保持一致
-        const width = containerRef.current.offsetWidth - 32;
-        const height = containerRef.current.offsetHeight;
-        if (width > 0) {
-          return emitSize(width, height);
-        }
-      }
-      return false;
-    };
-
-    const tryInit = () => {
-      if (measureAndEmit()) {
-        // 成功获取宽度，设置 ResizeObserver
-        if (containerRef.current) {
-          resizeObserver = new ResizeObserver(() => {
-            // 拖动时跳过更新，避免频繁重算布局
-            if (useUIStore.getState().isResizingPanels) return;
-            measureAndEmit();
-          });
-          resizeObserver.observe(containerRef.current);
-        }
-      } else if (retryCount < maxRetries) {
-        // 重试
-        retryCount++;
-        requestAnimationFrame(tryInit);
-      }
-    };
-
-    // 使用 requestAnimationFrame 确保 DOM 已渲染
-    requestAnimationFrame(tryInit);
-
-    return () => {
-      if (resizeObserver) {
-        resizeObserver.disconnect();
-      }
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-      }
-    };
-  }, []);
-
-  // 拖动结束时（isResizingPanels 从 true -> false）立即测量一次
-  useEffect(() => {
-    if (isResizingPanels) return;
-    if (!containerRef.current) return;
-    const width = containerRef.current.offsetWidth - 32;
-    const height = containerRef.current.offsetHeight;
-    if (width > 0) {
-      setContainerWidth(width);
-      setContainerHeight(height);
-      // 重置虚拟列表缓存
-      if (listRef.current) {
-        listRef.current.resetAfterIndex(0);
-      }
-    }
-  }, [isResizingPanels]);
-
-  // 布局计算（始终在主线程同步执行）
-  const rows = useMemo(() => {
-    if (!filteredImages.length || !containerWidth) {
-      return [];
-    }
-
-    const gap = 16;
-    const targetHeight = thumbnailHeight;
-    const calculatedRows = [];
-    let currentRow = [];
-    let currentRowWidthSum = 0;
-
-    filteredImages.forEach((image, index) => {
-      const aspectRatio = image.width / image.height;
-      const imageWidth = targetHeight * aspectRatio;
       
-      currentRow.push({ 
-        ...image, 
-        originalWidth: imageWidth,
-        aspectRatio: aspectRatio
-      });
-      currentRowWidthSum += imageWidth;
-      
-      const currentGaps = (currentRow.length - 1) * gap;
-      const totalWidth = currentRowWidthSum + currentGaps;
-      const isLastImage = index === filteredImages.length - 1;
-      
-      let shouldFinishRow = false;
-      
-      if (isLastImage) {
-        shouldFinishRow = true;
-      } else if (totalWidth >= containerWidth * 0.95) {
-        // Row is almost full (95% or more) - finish it
-        shouldFinishRow = true;
-      } else {
-        // Check if adding next image would overflow too much
-        const nextImage = filteredImages[index + 1];
-        if (nextImage) {
-          const nextAspectRatio = nextImage.width / nextImage.height;
-          const nextImageWidth = targetHeight * nextAspectRatio;
-          const nextTotalWidth = currentRowWidthSum + nextImageWidth + (currentRow.length * gap);
-          
-          // If adding next image would exceed 120% of container width, finish current row
-          if (nextTotalWidth > containerWidth * 1.2) {
-            shouldFinishRow = true;
-          }
-        }
+      if (undoStack.length === 0) return;
+      const last = undoStack[undoStack.length - 1];
+      setUndoStack(prev => prev.slice(0, -1));
+
+      console.log(`🎯 准备撤销: ${last}`);
+
+      if (last === 'move' && moveUndoHistory.length > 0) {
+        console.log('↩️ 执行移动撤销');
+        await handleUndoMove();
+      } else if (last === 'delete' && undoHistory.length > 0) {
+        console.log('↩️ 执行删除撤销');
+        await handleUndo();
       }
       
-      if (shouldFinishRow) {
-        const totalGaps = (currentRow.length - 1) * gap;
-        const availableWidth = containerWidth - totalGaps;
-        
-        // For last row with few images, limit the scale to avoid over-stretching
-        let scale = availableWidth / currentRowWidthSum;
-        
-        if (isLastImage && currentRow.length < 3) {
-          // Last row with 1-2 images: don't stretch too much
-          scale = Math.min(scale, 1.2);
-        }
-        
-        const rowHeight = targetHeight * scale;
-        
-        currentRow = currentRow.map(img => ({
-          ...img,
-          calculatedWidth: img.originalWidth * scale,
-          calculatedHeight: rowHeight
-        }));
-        
-        calculatedRows.push(currentRow);
-        
-        // Reset for next row
-        currentRow = [];
-        currentRowWidthSum = 0;
+      console.log('✅ 撤销完成');
+    },
+    onCopy: () => {
+      const result = handleCopy();
+      if (result.success) {
+        setUndoToast({
+          isVisible: true,
+          message: `已复制 ${result.count} 个文件`,
+          count: result.count
+        });
+        setTimeout(() => setUndoToast({ isVisible: false, message: '', count: 0 }), 2000);
       }
+    },
+    onPaste: handlePaste,
+    onRename: handleStartRename,
+    onRating: handleQuickRating,
+    canUndo: undoStack.length > 0,
+    canPaste: selectedFolder !== null
+  });
+
+  // 包装上传处理以集成冲突对话框
+  const handleDrop = useCallback(async (e) => {
+    await baseHandleDrop(e, (conflicts, files, targetFolder) => {
+      showConflictDialog(conflicts, 'upload', { files, targetFolder });
     });
+  }, [baseHandleDrop, showConflictDialog]);
 
-    return calculatedRows;
-  }, [filteredImages, thumbnailHeight, containerWidth]);
-
-  const getThumbnailUrl = (image) => {
-    // 后端已统一转换为 camelCase
-    const thumbnailPath = image.thumbnailPath;
-    
-    if (!currentLibraryId || !thumbnailPath) {
-      return '';
-    }
-    // 提取文件名（兼容反斜杠）
-    const filename = thumbnailPath.replace(/\\/g, '/').split('/').pop();
-    // 使用分片结构，不再需要 size 参数
+  // 缩略图和原图 URL
+  const getThumbnailUrl = useCallback((image) => {
+    if (!currentLibraryId || !image.thumbnailPath) return '';
+    const filename = image.thumbnailPath.replace(/\\/g, '/').split('/').pop();
     return imageAPI.getThumbnailUrl(currentLibraryId, filename);
-  };
+  }, [currentLibraryId]);
 
-  const getOriginalUrl = (image) => {
+  const getOriginalUrl = useCallback((image) => {
     if (!currentLibraryId) return '';
     return imageAPI.getOriginalUrl(currentLibraryId, image.path);
-  };
+  }, [currentLibraryId]);
 
-  // PhotoProvider 使用与布局无关的列表，避免随 containerWidth 变化重建
+  // PhotoProvider 图片列表
   const providerImages = useMemo(() => {
     return filteredImages.map(img => ({ src: getOriginalUrl(img), key: img.id }));
-  }, [filteredImages, currentLibraryId]);
+  }, [filteredImages, getOriginalUrl]);
 
-  // 是否启用虚拟滚动
-  const useVirtualScroll = filteredImages.length > VIRTUAL_SCROLL_THRESHOLD;
-
-  // 获取行高（用于虚拟滚动）
-  const getRowHeight = useCallback((index) => {
-    if (!rows || !rows[index] || rows[index].length === 0) {
-      return thumbnailHeight + 40;
-    }
-    // 行高 = 图片高度 + 文件名区域 + 行间距
-    const firstImage = rows[index][0];
-    return (firstImage?.calculatedHeight || thumbnailHeight) + 28 + 32;
-  }, [rows, thumbnailHeight]);
-
-  // 跟踪上次的行数，用于增量更新虚拟列表
-  const prevRowCountRef = useRef(0);
-  
-  // 当行数据变化时，智能更新虚拟列表缓存
-  useEffect(() => {
-    if (listRef.current && useVirtualScroll) {
-      const prevRowCount = prevRowCountRef.current;
-      const currRowCount = rows.length;
-      
-      if (currRowCount > prevRowCount && prevRowCount > 0) {
-        // 增量更新：只重置新增的行，保持滚动位置
-        const resetIndex = Math.max(0, prevRowCount - 1);
-        listRef.current.resetAfterIndex(resetIndex);
-        
-        // 不需要手动恢复滚动位置，react-window 会自动保持
-      } else if (currRowCount !== prevRowCount) {
-        // 完全重置（只在行数减少或首次加载时）
-        listRef.current.resetAfterIndex(0);
-      }
-      
-      prevRowCountRef.current = currRowCount;
-    }
-  }, [rows, useVirtualScroll]);
-
-  // 扁平化的图片列表（用于 Shift 多选）
-  const flatImages = useMemo(() => {
-    if (!rows || rows.length === 0) return [];
-    return rows.flat();
-  }, [rows]);
-
-  // 处理图片点击（支持 Ctrl/Shift 多选）
+  // 图片点击处理
   const handleImageClick = useCallback((image, event, imageIndex) => {
-    // 关键修复：点击图片时清空文件夹选中状态
     setSelectedFolderItem(null);
     
     if (event.ctrlKey || event.metaKey) {
-      // Ctrl/Cmd 点击：切换选中状态
       event.preventDefault();
       toggleImageSelection(image);
       setLastSelectedIndex(imageIndex);
     } else if (event.shiftKey && lastSelectedIndex !== null) {
-      // Shift 点击：范围选择
       event.preventDefault();
       const start = Math.min(lastSelectedIndex, imageIndex);
       const end = Math.max(lastSelectedIndex, imageIndex);
       const rangeImages = flatImages.slice(start, end + 1);
       setSelectedImages(rangeImages);
     } else {
-      // 普通点击：单选
       clearSelection();
       setSelectedImage(image);
       setLastSelectedIndex(imageIndex);
     }
   }, [flatImages, lastSelectedIndex, toggleImageSelection, setSelectedImages, clearSelection, setSelectedImage, setSelectedFolderItem]);
 
-  // 处理右键菜单
+  // 图片双击处理
+  const handleImageDoubleClick = useCallback((image, flatIndex) => {
+    const fileType = image.fileType || 'image';
+    if (fileType === 'image') {
+      setPhotoIndex(flatIndex);
+    } else {
+      setViewerFile(image);
+    }
+  }, []);
+  
+  // 文件名双击处理（重命名）
+  const handleFilenameDoubleClick = useCallback((e, image) => {
+    // 始终阻止事件冒泡，避免触发图片放大
+    e.stopPropagation();
+    
+    // 只在单选时允许双击重命名
+    if (selectedImages.length === 0) {
+      handleStartRename(image);
+    }
+  }, [selectedImages, handleStartRename]);
+
+  // 右键菜单
   const handleContextMenu = useCallback((e, image) => {
     e.preventDefault();
+
+    // 右键时，如果当前图片不在选区中，则将其设为新的选中项
+    if (selectedImages.length === 0) {
+      if (!selectedImage || selectedImage.id !== image.id) {
+        clearSelection();
+        setSelectedImage(image);
+      }
+    } else if (!selectedImages.some(img => img.id === image.id)) {
+      // 已经有多选，但右键点在选区外，则重置为单选
+      clearSelection();
+      setSelectedImage(image);
+    }
+
     setContextMenu({
       isOpen: true,
       position: { x: e.clientX, y: e.clientY },
       image
     });
-  }, []);
+  }, [selectedImages, selectedImage, clearSelection, setSelectedImage]);
 
-  // 撤销删除 - 乐观更新，立即响应
-  const handleUndo = async () => {
-    if (undoHistory.length === 0) return;
-    
-    // 从历史栈中取出最近的删除记录
-    const lastDeleted = undoHistory[undoHistory.length - 1];
-    const remainingHistory = undoHistory.slice(0, -1);
-    
-    // 1. 立即关闭Toast
-    setUndoToast({ isVisible: false, message: '', count: 0 });
-    
-    // 2. 立即更新历史栈
-    setUndoHistory(remainingHistory);
-    
-    // 3. 获取被恢复文件的文件夹路径
-    const restoredFolder = lastDeleted.images[0]?.folder || null;
-    
-    // 4. 立即更新文件夹计数（乐观更新）
-    const { folders, setFolders } = useImageStore.getState();
-    if (folders && folders.length > 0) {
-      const updatedFolders = folders.map(folder => {
-        // 计算该文件夹下恢复的图片数量
-        const restoredInFolder = lastDeleted.images.filter(img => 
-          img.folder === folder.path || img.folder?.startsWith(folder.path + '/')
-        ).length;
-        
-        if (restoredInFolder > 0) {
-          return {
-            ...folder,
-            count: (folder.count || 0) + restoredInFolder
-          };
-        }
-        return folder;
-      });
-      setFolders(updatedFolders);
-    }
-    
-    // 5. 立即恢复图片到UI（乐观更新）
-    if (restoredFolder && restoredFolder !== selectedFolder) {
-      // 跨文件夹：先跳转，让文件夹加载自然显示图片
-      setSelectedFolder(restoredFolder);
-      console.log(`📂 跳转到文件夹: ${restoredFolder}`);
-    } else {
-      // 同文件夹：立即添加到列表
-      const restoredImages = [...images, ...lastDeleted.images];
-      setImages(restoredImages);
-    }
-    
-    // 6. 后台执行API调用（不阻塞UI）
-    Promise.all([
-      fileAPI.restore(currentLibraryId, lastDeleted.items),
-      imageAPI.getFolders(currentLibraryId)
-    ]).then(([restoreResult, foldersRes]) => {
-      // 检查恢复结果
-      if (restoreResult.failed.length > 0) {
-        console.warn(`⚠️ 恢复失败: ${restoreResult.failed.length} 个文件`);
-        const errorMsg = restoreResult.failed[0].error || '未知错误';
-        
-        // 失败时回滚UI
-        setUndoHistory(undoHistory);
-        if (restoredFolder === selectedFolder) {
-          setImages(images);
-        }
-        setFolders(foldersRes.folders);
-        alert(`恢复失败: ${errorMsg}\n\n提示：超过5分钟的文件已移入系统回收站，请手动从回收站恢复。`);
-      } else {
-        // 成功时刷新文件夹列表以确保同步
-        setFolders(foldersRes.folders);
-      }
-    }).catch(error => {
-      console.error('恢复失败:', error);
-      // 失败时回滚
-      setUndoHistory(undoHistory);
-      if (restoredFolder === selectedFolder) {
-        setImages(images);
-      }
-      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
-        setFolders(foldersRes.folders);
-      });
-      alert('恢复失败: ' + (error.message || '未知错误'));
-    });
-  };
-
-  // 快速评分（数字键 0-5）
-  const handleQuickRating = async (rating) => {
-    const imagesToRate = selectedImages.length > 0
+  // 拖拽开始
+  const handleDragStart = useCallback((e, image) => {
+    const draggedImages = selectedImages.length > 0 && selectedImages.some(img => img.id === image.id)
       ? selectedImages
-      : selectedImage
-      ? [selectedImage]
-      : [];
+      : [image];
     
-    if (imagesToRate.length === 0) return;
-    
-    try {
-      const paths = imagesToRate.map(img => img.path);
-      await imageAPI.updateRating(currentLibraryId, paths, rating);
-      
-      // 更新本地状态
-      const updatedImages = images.map(img => {
-        if (paths.includes(img.path)) {
-          return { ...img, rating };
-        }
-        return img;
-      });
-      setImages(updatedImages);
-      
-      // 更新选中状态
-      if (selectedImage && paths.includes(selectedImage.path)) {
-        useImageStore.getState().setSelectedImage({ ...selectedImage, rating });
-      }
-      if (selectedImages.length > 0) {
-        const updatedSelected = selectedImages.map(img => {
-          if (paths.includes(img.path)) {
-            return { ...img, rating };
-          }
-          return img;
-        });
-        useImageStore.getState().setSelectedImages(updatedSelected);
-      }
-      
-      // 显示评分提醒
-      setRatingToast({
-        isVisible: true,
-        rating,
-        count: imagesToRate.length
-      });
-      
-      console.log(`⭐ 已将 ${imagesToRate.length} 张图片评为 ${rating} 星`);
-    } catch (error) {
-      console.error('评分失败:', error);
-      alert('评分失败: ' + (error.message || '未知错误'));
-    }
-  };
+    const items = draggedImages.map(img => ({ type: 'file', path: img.path }));
+    e.dataTransfer.setData('application/json', JSON.stringify({ items }));
+    e.dataTransfer.effectAllowed = 'move';
+  }, [selectedImages]);
 
-  // 快速删除（乐观更新，立即响应）
-  const handleQuickDelete = async () => {
-    const items = selectedImages.length > 0
-      ? selectedImages.map(img => ({ type: 'file', path: img.path }))
-      : selectedImage
-      ? [{ type: 'file', path: selectedImage.path }]
-      : [];
-    
-    if (items.length === 0) return;
-    
-    // 保存被删除的图片信息（乐观更新）
-    const deletingPaths = new Set(items.map(item => item.path));
-    const deletedImagesList = images.filter(img => deletingPaths.has(img.path));
-    
-    // 1. 立即更新UI（乐观更新）- 最快的响应
-    const remainingImages = images.filter(img => !deletingPaths.has(img.path));
-    setImages(remainingImages);
-    clearSelection();
-    
-    // 2. 立即更新文件夹计数（乐观更新）
-    const { folders, setFolders } = useImageStore.getState();
-    if (folders && folders.length > 0) {
-      const updatedFolders = folders.map(folder => {
-        // 计算该文件夹下被删除的图片数量
-        const deletedInFolder = deletedImagesList.filter(img => 
-          img.folder === folder.path || img.folder?.startsWith(folder.path + '/')
-        ).length;
-        
-        if (deletedInFolder > 0) {
-          return {
-            ...folder,
-            count: Math.max(0, (folder.count || 0) - deletedInFolder)
-          };
-        }
-        return folder;
-      });
-      setFolders(updatedFolders);
-    }
-    
-    // 3. 推入历史栈
-    const newHistory = [...undoHistory, { 
-      images: deletedImagesList, 
-      paths: Array.from(deletingPaths),
-      items: items
-    }];
-    setUndoHistory(newHistory);
-    
-    // 5. 显示Toast（立即显示）
-    setUndoToast({
-      isVisible: true,
-      message: `已将 ${items.length} 个文件移入临时文件夹（Ctrl+Z撤销 · ${newHistory.length}次）`,
-      count: items.length
-    });
-    
-    // 6. 后台执行API调用（不阻塞UI）
-    Promise.all([
-      fileAPI.delete(currentLibraryId, items),
-      imageAPI.getFolders(currentLibraryId)
-    ]).then(([deleteResult, foldersRes]) => {
-      // 检查是否有失败的项
-      if (deleteResult.failed.length > 0) {
-        console.warn(`⚠️ 删除失败: ${deleteResult.failed.length} 个文件`, deleteResult.failed);
-        // 如果有失败，回滚UI
-        setImages(images);
-        setUndoHistory(undoHistory);
-        setUndoToast({ isVisible: false, message: '', count: 0 });
-        setFolders(foldersRes.folders);
-        alert('删除失败: 部分文件无法删除');
-      } else {
-        // 成功时刷新文件夹列表（但已经被乐观更新了，这里主要是确保同步）
-        setFolders(foldersRes.folders);
-      }
-    }).catch(error => {
-      console.error('删除失败:', error);
-      // 失败时回滚UI
-      setImages(images);
-      setUndoHistory(undoHistory);
-      setUndoToast({ isVisible: false, message: '', count: 0 });
-      imageAPI.getFolders(currentLibraryId).then(foldersRes => {
-        setFolders(foldersRes.folders);
-      });
-      alert('删除失败: ' + (error.message || '未知错误'));
-    });
-  };
-
-  // 打开移动文件夹选择器
-  const handleMoveClick = useCallback(() => {
-    // 准备待移动的项
+  // 准备移动文件（用于右键菜单）
+  const handlePrepareMove = useCallback(() => {
     const itemsToMove = selectedImages.length > 0
       ? selectedImages.map(img => ({ type: 'file', path: img.path }))
       : selectedImage
@@ -792,622 +286,61 @@ function ImageWaterfall() {
       : [];
 
     if (itemsToMove.length === 0) return;
-
-    setMoveItems(itemsToMove);
-    setShowFolderSelector(true);
+    
     setContextMenu({ isOpen: false, position: null, image: null });
-  }, [selectedImages, selectedImage]);
+    handleMoveClick(itemsToMove);
+  }, [selectedImages, selectedImage, handleMoveClick]);
 
-  // 执行移动
-  const handleMove = useCallback(async (targetFolder) => {
-    if (!currentLibraryId || moveItems.length === 0) return;
-
-    setShowFolderSelector(false);
-
-    // 1. 立即从当前列表中移除这些图片（乐观更新）
-    const movedPaths = new Set(moveItems.map(item => item.path));
-    const remainingImages = images.filter(img => !movedPaths.has(img.path));
-    setImages(remainingImages);
-    clearSelection();
-
-    try {
-      // 2. 后台执行移动和刷新（并行）
-      const [result, foldersRes] = await Promise.all([
-        fileAPI.move(currentLibraryId, moveItems, targetFolder),
-        imageAPI.getFolders(currentLibraryId)
-      ]);
-
-      if (result.failed && result.failed.length > 0) {
-        alert(`移动失败: ${result.failed[0].error}`);
-        // 失败时恢复图片列表
-        setImages(images);
-      } else {
-        console.log(`✅ 已移动 ${moveItems.length} 个文件到: ${targetFolder || '根目录'}`);
-      }
-
-      // 3. 刷新文件夹列表
-      setFolders(foldersRes.folders);
-    } catch (error) {
-      console.error('移动失败:', error);
-      alert('移动失败: ' + (error.message || '未知错误'));
-      // 失败时恢复图片列表
-      setImages(images);
-    } finally {
-      setMoveItems([]);
-    }
-  }, [currentLibraryId, moveItems, images, setImages, clearSelection, setFolders]);
-
-  // 复制图片到系统剪贴板（支持多图，使用 HTML 格式）
-  const copyImagesToSystemClipboard = async (images) => {
-    try {
-      // 检查 Clipboard API 是否可用
-      if (typeof ClipboardItem === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.write !== 'function') {
-        console.warn('系统剪贴板 API 不可用');
-        return false;
-      }
-
-      if (images.length === 0) return false;
-
-      // 单张图片：直接复制为 PNG
-      if (images.length === 1) {
-        try {
-          const img = images[0];
-          const imageUrl = `/api/image/original/${currentLibraryId}/${img.path}`;
-          const response = await fetch(imageUrl);
-          const blob = await response.blob();
-          
-          // 转换为 PNG
-          const canvas = document.createElement('canvas');
-          const image = new Image();
-          
-          await new Promise((resolve, reject) => {
-            image.onload = resolve;
-            image.onerror = reject;
-            image.src = URL.createObjectURL(blob);
-          });
-          
-          canvas.width = image.width;
-          canvas.height = image.height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(image, 0, 0);
-          
-          URL.revokeObjectURL(image.src);
-          
-          const pngBlob = await new Promise((resolve) => {
-            canvas.toBlob(resolve, 'image/png');
-          });
-          
-          await navigator.clipboard.write([
-            new ClipboardItem({
-              'image/png': pngBlob
-            })
-          ]);
-          
-          return true;
-        } catch (error) {
-          console.warn('单图复制失败:', error);
-          return false;
-        }
-      }
-
-      // 多张图片：使用 HTML 格式（包含所有图片的 base64）
+  // 处理冲突解决（统一处理粘贴、移动、上传）
+  const handleConflictResolveAll = useCallback(async (action) => {
+    await resolveConflict(action, async (resolvedAction, operation) => {
+      const { type, pendingOperation } = conflictDialog;
+      
       try {
-        const imageDataList = await Promise.all(
-          images.map(async (img) => {
-            const imageUrl = `/api/image/original/${currentLibraryId}/${img.path}`;
-            const response = await fetch(imageUrl);
-            const blob = await response.blob();
-            
-            return new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                resolve({
-                  dataUrl: reader.result,
-                  filename: img.filename
-                });
-              };
-              reader.readAsDataURL(blob);
+        if (type === 'paste') {
+          await executePaste(pendingOperation.items, pendingOperation.targetFolder, resolvedAction);
+        } else if (type === 'move') {
+          await executeMove(pendingOperation.items, pendingOperation.targetFolder, resolvedAction);
+          // 注意：不在这里推入 undoStack，由外层的 handleMoveWithUndoStack 统一管理
+        } else if (type === 'upload') {
+          const result = await uploadWithConflictAction(
+            pendingOperation.files,
+            pendingOperation.targetFolder,
+            resolvedAction
+          );
+          if (result.success && !result.skipped) {
+            setUndoToast({
+              isVisible: true,
+              message: `上传完成: 成功 ${result.successCount} 个${result.failedCount > 0 ? `, 失败 ${result.failedCount} 个` : ''}`,
+              count: result.successCount
             });
-          })
-        );
-        
-        // 创建 HTML 格式（使用 span 包裹每张图片，消除间距）
-        const htmlContent = imageDataList.map(({ dataUrl, filename }) => `<span><img src="${dataUrl}" alt="${filename}"></span>`).join('');
-        
-        // 创建纯文本格式（文件名列表）
-        const textContent = images.map(img => img.filename).join('\n');
-        
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([htmlContent], { type: 'text/html' }),
-            'text/plain': new Blob([textContent], { type: 'text/plain' })
-          })
-        ]);
-        
-        return true;
-      } catch (error) {
-        console.warn('多图复制失败:', error);
-        return false;
-      }
-    } catch (error) {
-      console.warn('写入系统剪贴板失败:', error);
-      return false;
-    }
-  };
-
-  // 复制到剪贴板（立即更新应用内剪贴板，异步写入系统剪贴板）
-  const handleCopy = useCallback(() => {
-    const imagesToCopy = selectedImages.length > 0
-      ? selectedImages
-      : selectedImage
-      ? [selectedImage]
-      : [];
-
-    if (imagesToCopy.length === 0) return;
-
-    // 1. 立即写入应用内剪贴板（用于应用内粘贴，同步操作）
-    const itemsToCopy = imagesToCopy.map(img => ({ type: 'file', path: img.path, data: img }));
-    copyToClipboard(itemsToCopy, 'copy');
-    console.log(`📋 已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
-    
-    // 2. 立即显示Toast
-    setUndoToast({
-      isVisible: true,
-      message: `已复制 ${itemsToCopy.length} 个文件`,
-      count: itemsToCopy.length
-    });
-    
-    // 3秒后自动隐藏
-    setTimeout(() => {
-      setUndoToast({ isVisible: false, message: '', count: 0 });
-    }, 3000);
-    
-    // 3. 异步写入系统剪贴板（用于跨应用粘贴，不阻塞）
-    copyImagesToSystemClipboard(imagesToCopy).then(success => {
-      if (success) {
-        console.log(`✅ 已写入系统剪贴板，可粘贴到外部应用`);
-      }
-    });
-  }, [selectedImages, selectedImage, copyToClipboard, currentLibraryId]);
-
-  // 粘贴（先检查冲突）
-  const handlePaste = useCallback(async () => {
-    if (!currentLibraryId || !selectedFolder) return;
-    
-    const { items } = getClipboard();
-    if (!items || items.length === 0) return;
-
-    // 检查目标文件夹中是否存在同名文件（包括源文件本身）
-    const targetFolderImages = images.filter(img => img.folder === selectedFolder);
-    const conflicts = [];
-    
-    for (const item of items) {
-      const fileName = item.path.split('/').pop();
-      const itemFolder = item.path.substring(0, item.path.lastIndexOf('/'));
-      
-      // 检查是否存在同名文件（包括源文件本身）
-      const exists = targetFolderImages.some(img => img.filename === fileName);
-      
-      if (exists) {
-        conflicts.push({ 
-          path: item.path, 
-          name: fileName,
-          isSameLocation: itemFolder === selectedFolder // 标记是否在同一位置
-        });
-      }
-    }
-
-    // 如果有冲突，显示对话框
-    if (conflicts.length > 0) {
-      setConflictDialog({
-        isOpen: true,
-        conflicts,
-        pendingPaste: { items, targetFolder: selectedFolder }
-      });
-    } else {
-      // 没有冲突，直接执行粘贴
-      await executePaste(items, selectedFolder, 'rename');
-    }
-  }, [currentLibraryId, selectedFolder, getClipboard, images]);
-
-  // 执行粘贴操作
-  const executePaste = useCallback(async (items, targetFolder, conflictAction) => {
-    if (!currentLibraryId) return;
-
-    console.log(`📋 开始粘贴 ${items.length} 个文件到: ${targetFolder}`);
-
-    // 1. 立即更新文件夹计数（乐观更新）
-    const { folders, setFolders } = useImageStore.getState();
-    const originalFolders = folders; // 保存用于回滚
-    
-    if (folders && folders.length > 0) {
-      const updatedFolders = folders.map(folder => {
-        // 更新目标文件夹及其所有父文件夹的计数
-        if (folder.path === targetFolder || targetFolder.startsWith(folder.path + '/')) {
-          return {
-            ...folder,
-            count: (folder.count || 0) + items.length
-          };
-        }
-        return folder;
-      });
-      setFolders(updatedFolders);
-    }
-
-    // 2. 立即显示Toast
-    setUndoToast({
-      isVisible: true,
-      message: `已粘贴 ${items.length} 个文件`,
-      count: items.length
-    });
-    
-    // 3秒后自动隐藏
-    setTimeout(() => {
-      setUndoToast({ isVisible: false, message: '', count: 0 });
-    }, 3000);
-
-    // 3. 后台执行API调用（串行，确保文件夹数据是最新的）
-    (async () => {
-      try {
-        // 先执行复制
-        const result = await fileAPI.copy(currentLibraryId, items, targetFolder, conflictAction);
-        
-        // 处理结果
-        const successCount = result.success?.length || 0;
-        const failedCount = result.failed?.length || 0;
-        
-        if (failedCount > 0) {
-          // 有失败的项，更新Toast提示
-          setUndoToast({
-            isVisible: true,
-            message: successCount > 0 
-              ? `已粘贴 ${successCount} 个文件，${failedCount} 个失败`
-              : `粘贴失败: ${result.failed[0].error}`,
-            count: successCount
-          });
-          
-          setTimeout(() => {
-            setUndoToast({ isVisible: false, message: '', count: 0 });
-          }, 3000);
-        }
-
-        // 刷新当前文件夹的图片列表
-        if (selectedFolder === targetFolder) {
-          const params = { folder: selectedFolder };
-          const response = await imageAPI.search(currentLibraryId, params);
-          setImages(response.images);
-        }
-
-        // 复制完成后再刷新文件夹列表（确保拿到最新数据）
-        const foldersRes = await imageAPI.getFolders(currentLibraryId);
-        setFolders(foldersRes.folders);
-      } catch (error) {
-        console.error('粘贴失败:', error);
-        // 失败时回滚文件夹计数
-        setFolders(originalFolders);
-        setUndoToast({ isVisible: false, message: '', count: 0 });
-        alert('粘贴失败: ' + (error.message || '未知错误'));
-      }
-    })();
-  }, [currentLibraryId, selectedFolder, setImages]);
-
-  // 处理冲突对话框的选择
-  const handleConflictResolve = useCallback(async (action) => {
-    const { pendingPaste, pendingUpload } = conflictDialog;
-    
-    // 关闭对话框
-    setConflictDialog({ isOpen: false, conflicts: [], pendingPaste: null, pendingUpload: null });
-    
-    if (pendingPaste) {
-      // 粘贴冲突
-      await executePaste(pendingPaste.items, pendingPaste.targetFolder, action);
-    } else if (pendingUpload) {
-      // 上传冲突 - 重新上传并带上 conflictAction 参数
-      console.log(`处理上传冲突: ${action}`);
-      
-      if (action === 'skip') {
-        // 跳过：不再上传
-        console.log('用户选择跳过上传');
-        return;
-      }
-      
-      // 开始上传
-      setUploadProgress({ isUploading: true, percent: 0, current: 0, total: pendingUpload.files.length });
-      
-      try {
-        const result = await fileAPI.upload(
-          currentLibraryId,
-          pendingUpload.targetFolder,
-          pendingUpload.files,
-          (progressEvent) => {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setUploadProgress(prev => ({ ...prev, percent }));
-          },
-          action  // 传递 conflictAction
-        );
-        
-        // 上传完成
-        setUploadProgress({ isUploading: false, percent: 100, current: result.success.length, total: pendingUpload.files.length });
-        
-        // 显示结果提示
-        const successCount = result.success?.length || 0;
-        const failedCount = result.failed?.length || 0;
-        
-        let message = `上传完成: 成功 ${successCount} 个`;
-        if (failedCount > 0) message += `, 失败 ${failedCount} 个`;
-        
-        setUndoToast({
-          isVisible: true,
-          message: message,
-          count: successCount
-        });
-        
-        setTimeout(() => {
-          setUndoToast({ isVisible: false, message: '', count: 0 });
-          setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
-        }, 3000);
-        
-        // 立即刷新当前文件夹的图片列表
-        if (successCount > 0) {
-          const params = { folder: selectedFolder || '' };
-          const response = await imageAPI.search(currentLibraryId, params);
-          setImages(response.images);
-          
-          // 刷新文件夹列表
-          const foldersRes = await imageAPI.getFolders(currentLibraryId);
-          setFolders(foldersRes.folders);
-          
-          // 2秒后再刷新一次，确保缩略图已生成
-          setTimeout(async () => {
-            try {
-              const response2 = await imageAPI.search(currentLibraryId, params);
-              setImages(response2.images);
-              console.log('✅ 缩略图刷新完成');
-            } catch (err) {
-              console.error('刷新缩略图失败:', err);
-            }
-          }, 2000);
-        }
-      } catch (error) {
-        console.error('上传失败:', error);
-        setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
-        alert('上传失败: ' + (error.response?.data?.error || error.message || '未知错误'));
-      }
-    }
-  }, [conflictDialog, executePaste, currentLibraryId, selectedFolder, setImages, setFolders]);
-
-  // 取消冲突对话框
-  const handleConflictCancel = useCallback(() => {
-    setConflictDialog({ isOpen: false, conflicts: [], pendingPaste: null, pendingUpload: null });
-  }, []);
-
-  // 拖放事件处理 - 拖拽进入
-  const handleDragEnter = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // 关键修复：只检测外部文件拖入，排除应用内部拖动
-    const types = e.dataTransfer.types;
-    // 外部文件拖入的特征：包含 Files 且不包含 application/json
-    const hasFiles = types.includes('Files');
-    const hasJson = types.includes('application/json');
-    
-    if (hasFiles && !hasJson) {
-      setIsDraggingOver(true);
-    }
-  }, []);
-
-  // 拖放事件处理 - 拖拽悬停
-  const handleDragOver = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // 检查是否为外部文件
-    const types = e.dataTransfer.types;
-    const hasFiles = types.includes('Files');
-    const hasJson = types.includes('application/json');
-    
-    if (hasFiles && !hasJson) {
-      e.dataTransfer.dropEffect = 'copy';
-    } else {
-      e.dataTransfer.dropEffect = 'none';
-    }
-  }, []);
-
-  // 拖放事件处理 - 拖拽离开（立即取消提示）
-  const handleDragLeave = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // 关键修复：离开容器区域立即取消提示
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      const x = e.clientX;
-      const y = e.clientY;
-      // 检查鼠标是否离开容器区域
-      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-        setIsDraggingOver(false);
-      }
-    }
-  }, []);
-
-  // 拖放事件处理 - 文件放下
-  const handleDrop = useCallback(async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-
-    if (!currentLibraryId) {
-      alert('请先选择素材库');
-      return;
-    }
-
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) return;
-
-    console.log(`📤 准备上传 ${files.length} 个文件到: ${selectedFolder || '根目录'}`);
-
-    // 开始上传（不过滤格式，让后端处理）
-    setUploadProgress({ isUploading: true, percent: 0, current: 0, total: files.length });
-
-    try {
-      const result = await fileAPI.upload(
-        currentLibraryId,
-        selectedFolder || '',
-        files,
-        (progressEvent) => {
-          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(prev => ({ ...prev, percent }));
-        }
-      );
-
-      // 上传完成
-      setUploadProgress({ isUploading: false, percent: 100, current: result.success.length, total: files.length });
-
-      // 检查是否有冲突
-      const conflicts = result.conflicts || [];
-      if (conflicts.length > 0) {
-        // 有冲突，显示冲突对话框
-        console.log(`⚠️ 检测到 ${conflicts.length} 个文件冲突`);
-        setConflictDialog({
-          isOpen: true,
-          conflicts: conflicts,
-          pendingUpload: {
-            files: files.filter(f => {
-              const filename = f.name;
-              return conflicts.some(c => c.name === filename);
-            }),
-            targetFolder: selectedFolder || ''
+            setTimeout(() => setUndoToast({ isVisible: false, message: '', count: 0 }), 3000);
           }
-        });
-        setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
-        return;
+        }
+      } catch (error) {
+        alert(`操作失败: ${error.message || '未知错误'}`);
       }
+    });
+  }, [conflictDialog, resolveConflict, executePaste, executeMove, uploadWithConflictAction, setUndoToast]);
 
-      // 显示结果提示
-      const successCount = result.success?.length || 0;
-      const failedCount = result.failed?.length || 0;
-
-      let message = `上传完成: 成功 ${successCount} 个`;
-      if (failedCount > 0) message += `, 失败 ${failedCount} 个`;
-
-      setUndoToast({
-        isVisible: true,
-        message: message,
-        count: successCount
-      });
-
-      setTimeout(() => {
-        setUndoToast({ isVisible: false, message: '', count: 0 });
-        setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
-      }, 3000);
-
-      // 立即刷新当前文件夹的图片列表（不等待后台处理）
-      if (successCount > 0) {
-        // 立即刷新，让用户看到文件（缩略图可能还在生成中）
-        const params = { folder: selectedFolder || '' };
-        const response = await imageAPI.search(currentLibraryId, params);
-        setImages(response.images);
-
-        // 刷新文件夹列表
-        const foldersRes = await imageAPI.getFolders(currentLibraryId);
-        setFolders(foldersRes.folders);
-        
-        // 2秒后再刷新一次，确保缩略图已生成
-        setTimeout(async () => {
-          try {
-            const response2 = await imageAPI.search(currentLibraryId, params);
-            setImages(response2.images);
-            console.log('✅ 缩略图刷新完成');
-          } catch (err) {
-            console.error('刷新缩略图失败:', err);
-          }
-        }, 2000);
-      }
-    } catch (error) {
-      console.error('上传失败:', error);
-      setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
-      alert('上传失败: ' + (error.response?.data?.error || error.message || '未知错误'));
-    }
-  }, [currentLibraryId, selectedFolder, setImages, setFolders]);
-
-  // 开始重命名
-  const handleStartRename = useCallback((image) => {
-    if (!image) return;
-    setRenamingImage(image);
-    // 获取不带扩展名的文件名
-    const nameWithoutExt = image.filename.substring(0, image.filename.lastIndexOf('.')) || image.filename;
-    setEditingFilename(nameWithoutExt);
-    // 延迟聚焦，确保输入框已渲染
-    setTimeout(() => {
-      if (editInputRef.current) {
-        editInputRef.current.focus();
-        editInputRef.current.select();
-      }
-    }, 50);
-  }, [setRenamingImage]);
-
-  // 完成重命名
-  const handleFinishRename = useCallback(async () => {
-    if (!renamingImage || !editingFilename.trim()) {
-      setRenamingImage(null);
-      setEditingFilename('');
-      return;
-    }
-
-    const oldFilename = renamingImage.filename;
-    const ext = oldFilename.substring(oldFilename.lastIndexOf('.'));
-    const newFilename = editingFilename.trim() + ext;
-
-    // 如果文件名没有改变，直接退出
-    if (newFilename === oldFilename) {
-      setRenamingImage(null);
-      setEditingFilename('');
-      return;
-    }
-
-    try {
-      // 调用重命名API
-      const result = await fileAPI.rename(currentLibraryId, renamingImage.path, newFilename);
-      
-      // 更新图片信息
-      const newPath = result.newPath;
-      const actualNewName = result.newName;
-      updateImage(renamingImage.path, {
-        path: newPath,
-        filename: actualNewName
-      });
-
-      console.log(`✅ 重命名成功: ${oldFilename} → ${actualNewName}`);
-    } catch (error) {
-      console.error('重命名失败:', error);
-      alert('重命名失败: ' + (error.message || '未知错误'));
-    } finally {
-      setRenamingImage(null);
-      setEditingFilename('');
-    }
-  }, [renamingImage, editingFilename, currentLibraryId, updateImage]);
-
-  // 取消重命名
-  const handleCancelRename = useCallback(() => {
-    setRenamingImage(null);
-    setEditingFilename('');
-  }, []);
-
-  // 准备右键菜单选项
+  // 右键菜单选项
   const getContextMenuOptions = useCallback((image) => {
     const isMultiSelection = selectedImages.length > 0;
-    const menuOptions = [];
-    
-    // 复制选项放在第一位
-    menuOptions.push(
+    const menuOptions = [
       menuItems.copy(() => {
         setContextMenu({ isOpen: false, position: null, image: null });
-        handleCopy();
+        const result = handleCopy();
+        if (result.success) {
+          setUndoToast({
+            isVisible: true,
+            message: `已复制 ${result.count} 个文件`,
+            count: result.count
+          });
+          setTimeout(() => setUndoToast({ isVisible: false, message: '', count: 0 }), 3000);
+        }
       })
-    );
+    ];
     
-    // 只在单选时显示重命名选项
     if (!isMultiSelection) {
       menuOptions.push(
         menuItems.rename(() => {
@@ -1418,7 +351,7 @@ function ImageWaterfall() {
     }
     
     menuOptions.push(
-      menuItems.move(handleMoveClick),
+      menuItems.move(handlePrepareMove),
       menuItems.delete(async () => {
         setContextMenu({ isOpen: false, position: null, image: null });
         await handleQuickDelete();
@@ -1426,150 +359,13 @@ function ImageWaterfall() {
     );
     
     return menuOptions;
-  }, [selectedImages, selectedImage, handleMoveClick, handleStartRename, handleCopy]);
+  }, [selectedImages, handlePrepareMove, handleStartRename, handleCopy, handleQuickDelete, setUndoToast]);
 
-  // 渲染单个图片单元格
-  const renderImageCell = (image, flatIndex) => {
-    const isSingleSelected = selectedImage?.id === image.id;
-    const isMultiSelected = selectedImages.some(img => img.id === image.id);
-    const isSelected = isSingleSelected || isMultiSelected;
-    
-    return (
-      <div
-        key={image.id}
-        className="flex-shrink-0"
-        style={{ width: `${image.calculatedWidth}px` }}
-      >
-        <div
-          className={`relative group cursor-pointer overflow-hidden rounded-lg transition-all hover:shadow-lg ${
-            isSelected 
-              ? 'border-2 border-blue-400 dark:border-blue-500' 
-              : 'border border-gray-200 dark:border-gray-600'
-          }`}
-          style={{ 
-            height: `${image.calculatedHeight}px`
-          }}
-          onClick={(e) => handleImageClick(image, e, flatIndex)}
-          onDoubleClick={() => {
-            const fileType = image.fileType || 'image';
-            if (fileType === 'image') {
-              setPhotoIndex(flatIndex);
-            } else {
-              setViewerFile(image);
-            }
-          }}
-          onContextMenu={(e) => handleContextMenu(e, image)}
-          draggable={true}
-          onDragStart={(e) => {
-            // 准备拖拽的图片列表
-            const draggedImages = selectedImages.length > 0 && selectedImages.some(img => img.id === image.id)
-              ? selectedImages
-              : [image];
-            
-            // 转换为 items 格式（type + path）
-            const items = draggedImages.map(img => ({
-              type: 'file',
-              path: img.path
-            }));
-            
-            e.dataTransfer.setData('application/json', JSON.stringify({ items }));
-            e.dataTransfer.effectAllowed = 'move';
-          }}
-        >
-          <img
-            src={getThumbnailUrl(image) || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23f3f4f6" width="200" height="200"/%3E%3Ctext x="50%25" y="45%25" dominant-baseline="middle" text-anchor="middle" fill="%239ca3af" font-family="sans-serif" font-size="14"%3E需要同步%3C/text%3E%3Ctext x="50%25" y="60%25" dominant-baseline="middle" text-anchor="middle" fill="%23d1d5db" font-family="sans-serif" font-size="12"%3E点击同步按钮%3C/text%3E%3C/svg%3E'}
-            alt={image.filename}
-            className="w-full h-full object-cover"
-            loading="lazy"
-            onError={(e) => {
-              // 缩略图加载失败时显示占位符
-              e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23fef2f2" width="200" height="200"/%3E%3Ctext x="50%25" y="45%25" dominant-baseline="middle" text-anchor="middle" fill="%23dc2626" font-family="sans-serif" font-size="14"%3E加载失败%3C/text%3E%3Ctext x="50%25" y="60%25" dominant-baseline="middle" text-anchor="middle" fill="%23f87171" font-family="sans-serif" font-size="12"%3E请重新同步%3C/text%3E%3C/svg%3E';
-              e.target.onerror = null; // 防止无限循环
-            }}
-          />
-          
-          {/* 文件类型标识 */}
-          {image.fileType && image.fileType !== 'image' && (
-            <div className={`absolute top-2 right-2 rounded-md px-2 py-1 flex items-center gap-1 shadow-lg ${
-              image.fileType === 'video' ? 'bg-blue-500 bg-opacity-90' :
-              image.fileType === 'audio' ? 'bg-pink-500 bg-opacity-90' :
-              image.fileType === 'document' ? 'bg-green-500 bg-opacity-90' :
-              image.fileType === 'design' ? 'bg-purple-500 bg-opacity-90' :
-              'bg-gray-500 bg-opacity-90'
-            }`}>
-              {image.fileType === 'video' && <Play className="w-4 h-4 text-white fill-white" />}
-              {image.fileType === 'audio' && <Music className="w-4 h-4 text-white" />}
-              {image.fileType === 'document' && <FileText className="w-4 h-4 text-white" />}
-              {image.fileType === 'design' && <Palette className="w-4 h-4 text-white" />}
-              {image.fileType === 'other' && <File className="w-4 h-4 text-white" />}
-              <span className="text-white text-xs font-semibold uppercase">
-                {image.format || image.filename.split('.').pop()}
-              </span>
-            </div>
-          )}
-          
-          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all pointer-events-none" />
-        </div>
-        <div className="mt-1 px-1 h-4 flex items-center">
-          {renamingImage?.id === image.id ? (
-            // 编辑模式 - 保持与显示模式相同的样式，只添加下划线提示
-            <input
-              ref={editInputRef}
-              type="text"
-              value={editingFilename}
-              onChange={(e) => setEditingFilename(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleFinishRename();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  handleCancelRename();
-                }
-              }}
-              onBlur={handleFinishRename}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full text-xs text-center bg-transparent border-none outline-none focus:outline-none underline decoration-2 decoration-blue-500 underline-offset-2 truncate leading-none"
-              style={{ 
-                color: isSelected ? '#3b82f6' : '#909090',
-                fontWeight: isSelected ? '600' : '400',
-                padding: 0,
-                margin: 0,
-                height: '1rem'
-              }}
-            />
-          ) : (
-            // 显示模式
-            <p 
-              className="text-xs truncate text-center transition-colors cursor-text m-0 leading-none"
-              style={{ 
-                color: isSelected ? '#3b82f6' : '#909090',
-                fontWeight: isSelected ? '600' : '400',
-                height: '1rem'
-              }}
-              onDoubleClick={(e) => {
-                // 只在单选时允许双击重命名
-                if (selectedImages.length === 0) {
-                  e.stopPropagation();
-                  handleStartRename(image);
-                }
-              }}
-              title={selectedImages.length === 0 ? "双击重命名" : ""}
-            >
-              {image.filename}
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // 渲染一行（用于虚拟滚动）
-  const renderRow = ({ index, style }) => {
+  // 渲染单行
+  const renderRow = useCallback(({ index, style }) => {
     const row = rows[index];
     if (!row) return null;
     
-    // 计算该行之前的所有图片数量
     let flatIndexBase = 0;
     for (let i = 0; i < index; i++) {
       flatIndexBase += rows[i]?.length || 0;
@@ -1577,66 +373,72 @@ function ImageWaterfall() {
     
     return (
       <div style={{ ...style, paddingBottom: '32px' }} className="flex gap-4">
-        {row.map((image, imageIndex) => renderImageCell(image, flatIndexBase + imageIndex))}
+        {row.map((image, imageIndex) => {
+          const flatIndex = flatIndexBase + imageIndex;
+          const isSingleSelected = selectedImage?.id === image.id;
+          const isMultiSelected = selectedImages.some(img => img.id === image.id);
+          const isSelected = isSingleSelected || isMultiSelected;
+          
+          return (
+            <ImageCell
+              key={image.id}
+              image={image}
+              flatIndex={flatIndex}
+              isSelected={isSelected}
+              renamingImage={renamingImage}
+              editingFilename={editingFilename}
+              editInputRef={editInputRef}
+              getThumbnailUrl={getThumbnailUrl}
+              onImageClick={handleImageClick}
+              onImageDoubleClick={handleImageDoubleClick}
+              onContextMenu={handleContextMenu}
+              onDragStart={handleDragStart}
+              onEditingChange={setEditingFilename}
+              onFinishRename={handleFinishRename}
+              onCancelRename={handleCancelRename}
+              onStartRename={handleStartRename}
+            />
+          );
+        })}
       </div>
     );
-  };
+  }, [
+    rows, 
+    selectedImage, 
+    selectedImages, 
+    renamingImage, 
+    editingFilename, 
+    getThumbnailUrl,
+    handleImageClick,
+    handleImageDoubleClick,
+    handleContextMenu,
+    handleDragStart,
+    handleStartRename,
+    handleFinishRename,
+    handleCancelRename
+  ]);
 
-  // 加载中时显示空容器，避免闪烁"暂无图片"
-  if (!filteredImages.length && imageLoadingState.isLoading) {
-    return (
-      <div 
-        ref={containerRef} 
-        className="h-full overflow-hidden relative"
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {/* 拖拽提示覆盖层 */}
-        {isDraggingOver && (
-          <div className="absolute inset-0 z-50 bg-blue-500 bg-opacity-20 border-4 border-dashed border-blue-500 flex items-center justify-center pointer-events-none">
-            <div className="bg-white dark:bg-gray-800 rounded-lg p-8 shadow-2xl">
-              <div className="text-center">
-                <div className="text-6xl mb-4">📤</div>
-                <p className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                  拖放图片到这里
-                </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  支持 JPG、PNG、GIF、WebP 等格式
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* 上传进度提示 */}
-        {uploadProgress.isUploading && (
-          <div className="absolute top-4 right-4 z-40 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 min-w-[300px]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                正在上传...
-              </span>
-              <span className="text-sm text-gray-500 dark:text-gray-400">
-                {uploadProgress.percent}%
-              </span>
-            </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-              <div
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${uploadProgress.percent}%` }}
-              />
-            </div>
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 text-right">
-              共 {uploadProgress.total} 个文件
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
+  // 虚拟列表更新
+  useRef(() => {
+    if (listRef.current && filteredImages.length > VIRTUAL_SCROLL_THRESHOLD) {
+      const prevRowCount = prevRowCountRef.current;
+      const currRowCount = rows.length;
+      
+      if (currRowCount > prevRowCount && prevRowCount > 0) {
+        const resetIndex = Math.max(0, prevRowCount - 1);
+        listRef.current.resetAfterIndex(resetIndex);
+      } else if (currRowCount !== prevRowCount) {
+        listRef.current.resetAfterIndex(0);
+      }
+      
+      prevRowCountRef.current = currRowCount;
+    }
+  }, [rows, filteredImages.length]);
 
-  // 真正没有图片时才显示提示
+  // 是否启用虚拟滚动
+  const useVirtualScroll = filteredImages.length > VIRTUAL_SCROLL_THRESHOLD;
+
+  // 空状态
   if (!filteredImages.length) {
     return (
       <div 
@@ -1647,60 +449,16 @@ function ImageWaterfall() {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* 拖拽提示覆盖层 */}
-        {isDraggingOver && (
-          <div className="absolute inset-0 z-50 bg-blue-500 bg-opacity-20 border-4 border-dashed border-blue-500 flex items-center justify-center pointer-events-none">
-            <div className="bg-white dark:bg-gray-800 rounded-lg p-8 shadow-2xl">
-              <div className="text-center">
-                <div className="text-6xl mb-4">📤</div>
-                <p className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                  拖放图片到这里
-                </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  支持 JPG、PNG、GIF、WebP 等格式
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* 上传进度提示 */}
-        {uploadProgress.isUploading && (
-          <div className="absolute top-4 right-4 z-40 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 min-w-[300px]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                正在上传...
-              </span>
-              <span className="text-sm text-gray-500 dark:text-gray-400">
-                {uploadProgress.percent}%
-              </span>
-            </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-              <div
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${uploadProgress.percent}%` }}
-              />
-            </div>
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 text-right">
-              共 {uploadProgress.total} 个文件
-            </div>
-          </div>
-        )}
-        
-        <div className="text-center">
-          <p className="text-lg mb-2">暂无图片</p>
-          <p className="text-sm">请添加素材库或调整搜索条件</p>
-          <p className="text-xs mt-4 text-gray-400">可以直接拖拽文件到这里上传</p>
-        </div>
+        <DragDropOverlay isVisible={isDraggingOver} />
+        <UploadProgress progress={uploadProgress} />
+        <EmptyState isLoading={imageLoadingState.isLoading} />
       </div>
     );
   }
 
   // 等待容器宽度初始化
   if (!containerWidth && filteredImages.length > 0) {
-    return (
-      <div ref={containerRef} className="h-full overflow-hidden" />
-    );
+    return <div ref={containerRef} className="h-full overflow-hidden" />;
   }
 
   return (
@@ -1712,45 +470,8 @@ function ImageWaterfall() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* 拖拽提示覆盖层 */}
-      {isDraggingOver && (
-        <div className="absolute inset-0 z-50 bg-blue-500 bg-opacity-20 border-4 border-dashed border-blue-500 flex items-center justify-center pointer-events-none">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-8 shadow-2xl">
-            <div className="text-center">
-              <div className="text-6xl mb-4">📤</div>
-              <p className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                拖放图片到这里
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                支持 JPG、PNG、GIF、WebP 等格式
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* 上传进度提示 */}
-      {uploadProgress.isUploading && (
-        <div className="absolute top-4 right-4 z-40 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 min-w-[300px]">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              正在上传...
-            </span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {uploadProgress.percent}%
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-            <div
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${uploadProgress.percent}%` }}
-            />
-          </div>
-          <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 text-right">
-            共 {uploadProgress.total} 个文件
-          </div>
-        </div>
-      )}
+      <DragDropOverlay isVisible={isDraggingOver} />
+      <UploadProgress progress={uploadProgress} />
       
       <PhotoProvider
         images={providerImages}
@@ -1760,7 +481,6 @@ function ImageWaterfall() {
         onIndexChange={setPhotoIndex}
       >
         {useVirtualScroll ? (
-          /* 虚拟滚动模式 */
           <List
             ref={listRef}
             height={containerHeight || 600}
@@ -1770,11 +490,10 @@ function ImageWaterfall() {
             className="p-4"
             overscanCount={LOAD_CONFIG.overscanCount}
             onScroll={({ scrollOffset, scrollDirection }) => {
-              // 向下滚动：接近底部时加载更多
               if (scrollDirection === 'forward' && imageLoadingState.hasMore && !imageLoadingState.isLoading) {
                 const totalHeight = rows.reduce((sum, _, i) => sum + getRowHeight(i), 0);
                 const scrollBottom = scrollOffset + (containerHeight || 600);
-                if (totalHeight - scrollBottom < LOAD_CONFIG.preloadThreshold) {
+                if (totalHeight - scrollBottom < preloadThreshold) {
                   loadMoreImages();
                 }
               }
@@ -1783,14 +502,12 @@ function ImageWaterfall() {
             {renderRow}
           </List>
         ) : (
-          /* 普通渲染模式（≤500张图片） */
           <div 
             className="h-full overflow-y-auto p-4"
             onScroll={(e) => {
-              // 向下滚动：接近底部时加载更多
               if (imageLoadingState.hasMore && !imageLoadingState.isLoading) {
                 const { scrollTop, scrollHeight, clientHeight } = e.target;
-                if (scrollHeight - scrollTop - clientHeight < LOAD_CONFIG.preloadThreshold) {
+                if (scrollHeight - scrollTop - clientHeight < preloadThreshold) {
                   loadMoreImages();
                 }
               }
@@ -1804,7 +521,33 @@ function ImageWaterfall() {
                 }
                 return (
                   <div key={rowIndex} className="flex gap-4">
-                    {row.map((image, imageIndex) => renderImageCell(image, flatIndexBase + imageIndex))}
+                    {row.map((image, imageIndex) => {
+                      const flatIndex = flatIndexBase + imageIndex;
+                      const isSingleSelected = selectedImage?.id === image.id;
+                      const isMultiSelected = selectedImages.some(img => img.id === image.id);
+                      const isSelected = isSingleSelected || isMultiSelected;
+                      
+                      return (
+                        <ImageCell
+                          key={image.id}
+                          image={image}
+                          flatIndex={flatIndex}
+                          isSelected={isSelected}
+                          renamingImage={renamingImage}
+                          editingFilename={editingFilename}
+                          editInputRef={editInputRef}
+                          getThumbnailUrl={getThumbnailUrl}
+                          onImageClick={handleImageClick}
+                          onImageDoubleClick={handleImageDoubleClick}
+                          onContextMenu={handleContextMenu}
+                          onDragStart={handleDragStart}
+                          onEditingChange={setEditingFilename}
+                          onFinishRename={handleFinishRename}
+                          onCancelRename={handleCancelRename}
+                          onStartRename={handleStartRename}
+                        />
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -1835,10 +578,15 @@ function ImageWaterfall() {
         isVisible={undoToast.isVisible}
         message={undoToast.message}
         onUndo={handleUndo}
-        onClose={() => {
-          setUndoToast({ isVisible: false, message: '', count: 0 });
-          // 不清空历史栈，允许Toast消失后仍可Ctrl+Z
-        }}
+        onClose={() => setUndoToast({ isVisible: false, message: '', count: 0 })}
+      />
+
+      {/* 撤销移动提示 */}
+      <UndoToast
+        isVisible={moveUndoToast.isVisible}
+        message={moveUndoToast.message}
+        onUndo={handleUndoMove}
+        onClose={() => setMoveUndoToast({ isVisible: false, message: '', count: 0 })}
       />
 
       {/* 评分提醒 */}
@@ -1854,11 +602,8 @@ function ImageWaterfall() {
         <FolderSelector
           folders={folders}
           currentFolder={selectedFolder}
-          onSelect={handleMove}
-          onClose={() => {
-            setShowFolderSelector(false);
-            setMoveItems([]);
-          }}
+          onSelect={handleMoveWithUndoStack}
+          onClose={handleCancelMove}
         />
       )}
 
@@ -1866,8 +611,8 @@ function ImageWaterfall() {
       <ConflictDialog
         isOpen={conflictDialog.isOpen}
         conflicts={conflictDialog.conflicts}
-        onResolve={handleConflictResolve}
-        onCancel={handleConflictCancel}
+        onResolve={handleConflictResolveAll}
+        onCancel={hideConflictDialog}
       />
     </div>
   );

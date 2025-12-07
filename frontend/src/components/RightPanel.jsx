@@ -8,6 +8,9 @@ import { useClipboardStore } from '../stores/useClipboardStore';
 import { imageAPI, fileAPI } from '../api';
 import JSZip from 'jszip';
 import RatingStars from './RatingStars';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('RightPanel');
 
 function RightPanel() {
   const { currentLibraryId } = useLibraryStore();
@@ -123,7 +126,7 @@ function RightPanel() {
       setPathCopied(true);
       setTimeout(() => setPathCopied(false), 2000);
     } catch (error) {
-      console.error('复制路径失败:', error);
+      logger.error('复制路径失败:', error);
       alert('复制失败，请重试');
     }
   };
@@ -171,9 +174,9 @@ function RightPanel() {
         filename: actualNewName
       });
 
-      console.log(`✅ 重命名成功: ${oldFilename} → ${actualNewName}`);
+      logger.debug(`✅ 重命名成功: ${oldFilename} → ${actualNewName}`);
     } catch (error) {
-      console.error('重命名失败:', error);
+      logger.error('重命名失败:', error);
       alert('重命名失败: ' + (error.message || '未知错误'));
     } finally {
       setIsEditingFilename(false);
@@ -227,37 +230,42 @@ function RightPanel() {
       const result = await fileAPI.rename(currentLibraryId, oldPath, newName);
       const newPath = result.newPath;
       
-      console.log(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
+      logger.debug(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
       
       const { setFolders, setSelectedFolder: setSelectedFolderGlobal, setSelectedFolderItem } = useImageStore.getState();
       
-      // 1. 立即更新选中的文件夹项（乐观更新）
       setSelectedFolderItem({
         ...selectedFolderItem,
         path: newPath,
         name: newName
       });
       
-      // 2. 如果重命名的是当前选中的文件夹，立即切换到新路径
-      // 这样可以避免先显示全部图片的闪烁
       if (isRenamingCurrentFolder) {
-        console.log(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
+        logger.debug(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
         setSelectedFolderGlobal(newPath);
+
+        // 重命名当前浏览的文件夹时，立即刷新该文件夹的图片列表，避免数量显示为 0
+        imageAPI.search(currentLibraryId, { folder: newPath }).then(response => {
+          const { setImages, setOriginalImages } = useImageStore.getState();
+          const imgs = response.images || [];
+          setImages(imgs);
+          setOriginalImages(imgs);
+        }).catch(error => {
+          logger.warn('重命名后刷新文件夹图片失败:', error);
+        });
       }
       
-      // 3. 后台刷新文件夹列表（确保数据一致性）
       imageAPI.getFolders(currentLibraryId).then(foldersRes => {
-        console.log('📁 重命名后最新文件夹列表:', foldersRes.folders);
+        logger.debug('📁 重命名后最新文件夹列表:', foldersRes.folders);
         setFolders(foldersRes.folders);
         
-        // 用最新数据更新选中的文件夹项
         const newFolderItem = foldersRes.folders.find(f => f.path === newPath);
         if (newFolderItem) {
           setSelectedFolderItem(newFolderItem);
         }
       });
     } catch (error) {
-      console.error('文件夹重命名失败:', error);
+      logger.error('文件夹重命名失败:', error);
       alert('重命名失败: ' + (error.message || '未知错误'));
     } finally {
       setIsEditingFolderName(false);
@@ -311,9 +319,9 @@ function RightPanel() {
         setSelectedImages(updatedSelectedImages);
       }
       
-      console.log(`✅ 已更新 ${paths.length} 张图片的评分为 ${newRating} 星`);
+      logger.debug(`✅ 已更新 ${paths.length} 张图片的评分为 ${newRating} 星`);
     } catch (error) {
-      console.error('更新评分失败:', error);
+      logger.error('更新评分失败:', error);
       alert('更新评分失败: ' + (error.message || '未知错误'));
     } finally {
       setIsUpdatingRating(false);
@@ -333,7 +341,8 @@ function RightPanel() {
   // 判断是否为可以直接显示原图的格式
   const canShowOriginal = (format) => {
     if (!format) return false;
-    const supportedFormats = ['jpg', 'jpeg', 'png', 'webp'];
+    // 添加 gif 支持，以便显示动画效果
+    const supportedFormats = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
     return supportedFormats.includes(format.toLowerCase());
   };
 
@@ -355,7 +364,7 @@ function RightPanel() {
     // 对于不支持的格式，只显示缩略图
     if (!shouldLoadOriginal) {
       setIsLoadingOriginal(false);
-      console.log(`格式 ${imageFormat} 不支持直接显示原图，使用缩略图`);
+      logger.debug(`格式 ${imageFormat} 不支持直接显示原图，使用缩略图`);
       return;
     }
     
@@ -379,7 +388,7 @@ function RightPanel() {
     
     img.onerror = () => {
       // 原图加载失败，保持显示缩略图
-      console.error('Failed to load original image');
+      logger.error('Failed to load original image');
       setIsLoadingOriginal(false);
     };
     
@@ -409,7 +418,7 @@ function RightPanel() {
     // 支持两种字段名
     const thumbnailPath = selectedImage?.thumbnailPath || selectedImage?.thumbnail_path;
     if (!thumbnailPath) {
-      console.warn('缩略图路径不存在:', selectedImage);
+      logger.warn('缩略图路径不存在:', selectedImage);
       return '';
     }
     // Handle both forward and backslash
@@ -461,7 +470,7 @@ function RightPanel() {
         try {
           success = document.execCommand('copy');
         } catch (err) {
-          console.error('execCommand copy 失败:', err);
+          logger.error('execCommand copy 失败:', err);
         }
         
         // 清理
@@ -541,7 +550,7 @@ function RightPanel() {
         try {
           success = document.execCommand('copy');
         } catch (err) {
-          console.error('execCommand copy 失败:', err);
+          logger.error('execCommand copy 失败:', err);
         }
         
         // 清理
@@ -550,7 +559,7 @@ function RightPanel() {
         
         resolve(success);
       } catch (err) {
-        console.error('Canvas 复制失败:', err);
+        logger.error('Canvas 复制失败:', err);
         resolve(false);
       }
     });
@@ -571,7 +580,7 @@ function RightPanel() {
       document.execCommand('copy');
       return true;
     } catch (err) {
-      console.error('execCommand 复制失败:', err);
+      logger.error('execCommand 复制失败:', err);
       return false;
     } finally {
       document.body.removeChild(textArea);
@@ -584,7 +593,7 @@ function RightPanel() {
       // 1. 先写入应用内剪贴板（同步，用于应用内粘贴）
       const itemsToCopy = [{ type: 'file', path: selectedImage.path, data: selectedImage }];
       copyToClipboard(itemsToCopy, 'copy');
-      console.log(`📋 已复制 1 个文件到应用内剪贴板`);
+      logger.debug(`📋 已复制 1 个文件到应用内剪贴板`);
       
       // 2. 获取原图URL，写入系统剪贴板
       const imageUrl = imageAPI.getOriginalUrl(currentLibraryId, selectedImage.path);
@@ -631,12 +640,12 @@ function RightPanel() {
           setTimeout(() => setImageCopied(false), 2000);
           return;
         } catch (err) {
-          console.warn('Clipboard API 失败，尝试备用方案:', err);
+          logger.warn('Clipboard API 失败，尝试备用方案:', err);
         }
       }
       
       // 方案2：使用 canvas + contenteditable + execCommand（非 HTTPS 环境）
-      console.log('尝试 Canvas + execCommand 方案...');
+      logger.debug('尝试 Canvas + execCommand 方案...');
       const canvasSuccess = await fallbackCopyImageViaCanvas(imageUrl);
       if (canvasSuccess) {
         setImageCopied(true);
@@ -645,7 +654,7 @@ function RightPanel() {
       }
       
       // 方案3：直接使用图片 URL + contenteditable
-      console.log('尝试直接图片 URL 方案...');
+      logger.debug('尝试直接图片 URL 方案...');
       const directSuccess = await fallbackCopyImage(imageUrl);
       if (directSuccess) {
         setImageCopied(true);
@@ -654,7 +663,7 @@ function RightPanel() {
       }
       
       // 方案4：最后降级为复制链接
-      console.warn('所有图片复制方案失败，降级为复制链接');
+      logger.warn('所有图片复制方案失败，降级为复制链接');
       const textSuccess = fallbackCopyText(imageUrl);
       if (textSuccess) {
         setImageCopied(true);
@@ -716,7 +725,7 @@ function RightPanel() {
             copyImg.style.marginBottom = '10px';
             container.appendChild(copyImg);
           } catch (err) {
-            console.error(`加载图片失败: ${filename}`, err);
+            logger.error(`加载图片失败: ${filename}`, err);
           }
         }
         
@@ -734,7 +743,7 @@ function RightPanel() {
         try {
           success = document.execCommand('copy');
         } catch (err) {
-          console.error('execCommand copy 失败:', err);
+          logger.error('execCommand copy 失败:', err);
         }
         
         // 清理
@@ -743,7 +752,7 @@ function RightPanel() {
         
         resolve(success);
       } catch (err) {
-        console.error('批量复制图片失败:', err);
+        logger.error('批量复制图片失败:', err);
         resolve(false);
       }
     });
@@ -769,7 +778,7 @@ function RightPanel() {
       // 1. 先写入应用内剪贴板（同步，用于应用内粘贴）
       const itemsToCopy = imagesToCopy.map(img => ({ type: 'file', path: img.path, data: img }));
       copyToClipboard(itemsToCopy, 'copy');
-      console.log(`📋 已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
+      logger.debug(`📋 已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
       
       if (imagesToCopy.length === 1) {
         // 单张图片：直接复制
@@ -823,12 +832,12 @@ function RightPanel() {
           setTimeout(() => setImageCopied(false), 2000);
           return;
         } catch (err) {
-          console.warn('Clipboard API 失败，尝试备用方案:', err);
+          logger.warn('Clipboard API 失败，尝试备用方案:', err);
         }
       }
       
       // 方案2：使用 contenteditable + execCommand
-      console.log('尝试 contenteditable 批量复制方案...');
+      logger.debug('尝试 contenteditable 批量复制方案...');
       const success = await fallbackCopyMultipleImages(imageUrls);
       if (success) {
         setImageCopied(true);
@@ -837,7 +846,7 @@ function RightPanel() {
       }
       
       // 方案3：降级为复制文件名列表
-      console.warn('批量图片复制失败，降级为复制文件名');
+      logger.warn('批量图片复制失败，降级为复制文件名');
       const textSuccess = fallbackCopyText(textContent);
       if (textSuccess) {
         setImageCopied(true);
@@ -892,15 +901,15 @@ function RightPanel() {
             const progress = Math.round(((i + 1) / imagesToExport.length) * 90); // 90% 用于下载
             setExportProgress(progress);
             
-            console.log(`已添加: ${img.filename} (${i + 1}/${imagesToExport.length})`);
+            logger.debug(`已添加: ${img.filename} (${i + 1}/${imagesToExport.length})`);
           } catch (error) {
-            console.error(`下载失败: ${img.filename}`, error);
+            logger.error(`下载失败: ${img.filename}`, error);
           }
         }
         
         // 生成 ZIP 文件
         setExportProgress(95);
-        console.log('正在生成 ZIP 文件...');
+        logger.debug('正在生成 ZIP 文件...');
         const zipBlob = await zip.generateAsync({ 
           type: 'blob',
           compression: 'DEFLATE',
@@ -917,10 +926,10 @@ function RightPanel() {
         document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
         
-        console.log('导出完成！');
+        logger.debug('导出完成！');
       }
     } catch (error) {
-      console.error('导出失败:', error);
+      logger.error('导出失败:', error);
       alert('导出失败，请重试');
     } finally {
       setIsExporting(false);
@@ -973,15 +982,15 @@ function RightPanel() {
           const progress = Math.round(((i + 1) / folderImages.length) * 90);
           setFolderExportProgress(progress);
 
-          console.log(`已添加: ${filePath} (${i + 1}/${folderImages.length})`);
+          logger.debug(`已添加: ${filePath} (${i + 1}/${folderImages.length})`);
         } catch (error) {
-          console.error(`下载失败: ${img.filename}`, error);
+          logger.error(`下载失败: ${img.filename}`, error);
         }
       }
 
       // 生成 ZIP 文件
       setFolderExportProgress(95);
-      console.log('正在生成 ZIP 文件...');
+      logger.debug('正在生成 ZIP 文件...');
       const zipBlob = await zip.generateAsync({
         type: 'blob',
         compression: 'DEFLATE',
@@ -998,9 +1007,9 @@ function RightPanel() {
       document.body.removeChild(link);
       URL.revokeObjectURL(link.href);
 
-      console.log('文件夹导出完成！');
+      logger.debug('文件夹导出完成！');
     } catch (error) {
-      console.error('导出文件夹失败:', error);
+      logger.error('导出文件夹失败:', error);
       alert('导出文件夹失败，请重试');
     } finally {
       setIsExportingFolder(false);
@@ -1312,7 +1321,7 @@ function RightPanel() {
                   isLoadingOriginal ? 'opacity-75' : 'opacity-100'
                 }`}
                 onError={(e) => {
-                  console.error('图片加载失败:', imageUrl);
+                  logger.error('图片加载失败:', imageUrl);
                   e.target.style.display = 'none';
                 }}
               />

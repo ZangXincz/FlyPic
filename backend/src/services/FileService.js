@@ -556,11 +556,12 @@ class FileService {
    * @param {string} libraryId - 素材库ID
    * @param {Array} items - 待移动项
    * @param {string} targetFolder - 目标文件夹（相对路径）
+   * @param {string} conflictAction - 冲突处理方式: 'skip'|'replace'|'rename'
    */
-  async moveItems(libraryId, items, targetFolder) {
+  async moveItems(libraryId, items, targetFolder, conflictAction = 'rename') {
     const db = this._getDatabase(libraryId);
     const libraryPath = db.libraryPath;
-    const results = { success: [], failed: [] };
+    const results = { success: [], failed: [], conflicts: [] };
 
     for (const item of items) {
       try {
@@ -570,12 +571,12 @@ class FileService {
         const normalizedTarget = targetFolder ? targetFolder.replace(/\\/g, '/') : '';
 
         // 目标文件夹相对路径
-        const newRelativeFolder = normalizedTarget
+        let newRelativeFolder = normalizedTarget
           ? `${normalizedTarget}/${fileName}`
           : fileName;
 
         const oldFullPath = path.join(libraryPath, oldPath);
-        const newFullPath = path.join(libraryPath, newRelativeFolder);
+        let newFullPath = path.join(libraryPath, newRelativeFolder);
 
         // 检查源路径是否存在
         if (!fs.existsSync(oldFullPath)) {
@@ -591,10 +592,53 @@ class FileService {
           fs.mkdirSync(targetFullPath, { recursive: true });
         }
 
-        // 检查目标是否已存在同名文件/文件夹
+        // 处理冲突
+        const isDirectory = item.type === 'folder';
+        
         if (fs.existsSync(newFullPath)) {
-          results.failed.push({ path: oldPath, error: '目标位置已存在同名文件' });
-          continue;
+          // 目标位置已存在同名文件/文件夹
+          results.conflicts.push({ path: oldPath, name: fileName });
+          
+          if (conflictAction === 'skip') {
+            // 跳过冲突文件
+            console.log(`⏭️  跳过冲突: ${fileName}`);
+            continue;
+          } else if (conflictAction === 'replace') {
+            // 覆盖：先删除目标文件/文件夹
+            console.log(`🔄 覆盖: ${fileName}`);
+            if (fs.statSync(newFullPath).isDirectory()) {
+              // 删除目标物理目录
+              fs.rmSync(newFullPath, { recursive: true, force: true });
+              // 同时删除数据库中目标路径下的记录，避免后续路径更新时触发 UNIQUE(path) 冲突
+              const normalizedTargetFolder = newRelativeFolder.replace(/\\/g, '/');
+              db.deleteImagesByFolderPrefix(normalizedTargetFolder);
+              db.deleteFoldersByPrefix(normalizedTargetFolder);
+            } else {
+              // 删除目标物理文件
+              fs.unlinkSync(newFullPath);
+              // 删除数据库中该文件的记录，避免 _updatePathInDatabase 更新到已存在路径时报 UNIQUE 约束错误
+              const normalizedTargetPath = newRelativeFolder.replace(/\\/g, '/');
+              db.deleteImage(normalizedTargetPath);
+            }
+            // 继续执行移动
+          } else if (conflictAction === 'rename') {
+            // 重命名：自动编号
+            const ext = isDirectory ? '' : path.extname(fileName);
+            const basename = isDirectory ? fileName : path.basename(fileName, ext);
+            let counter = 1;
+            
+            while (fs.existsSync(newFullPath)) {
+              const numberedName = isDirectory
+                ? `${basename} (${counter})`
+                : `${basename} (${counter})${ext}`;
+              newRelativeFolder = normalizedTarget
+                ? `${normalizedTarget}/${numberedName}`
+                : numberedName;
+              newFullPath = path.join(libraryPath, newRelativeFolder);
+              counter++;
+            }
+            console.log(`✏️  重命名为: ${path.basename(newFullPath)}`);
+          }
         }
 
         if (item.type === 'folder') {

@@ -107,9 +107,12 @@ export const useImageStore = create((set, get) => ({
   // 重命名操作
   setRenamingImage: (image) => set({ renamingImage: image }),
   
-  // 更新图片信息（重命名后）
+  // 更新图片信息（重命名、评分等）
   updateImage: (oldPath, newData) => set((state) => ({
     images: state.images.map(img => 
+      img.path === oldPath ? { ...img, ...newData } : img
+    ),
+    originalImages: state.originalImages.map(img =>
       img.path === oldPath ? { ...img, ...newData } : img
     ),
     selectedImage: state.selectedImage?.path === oldPath 

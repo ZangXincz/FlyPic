@@ -36,12 +36,14 @@ export const fileAPI = {
    * @param {string} libraryId - 素材库ID
    * @param {Array} items - 待移动项
    * @param {string} targetFolder - 目标文件夹路径
+   * @param {string} conflictAction - 冲突处理方式: 'skip'|'replace'|'rename'
    */
-  async move(libraryId, items, targetFolder) {
+  async move(libraryId, items, targetFolder, conflictAction = 'rename') {
     return api.post('/file/move', {
       libraryId,
       items,
-      targetFolder
+      targetFolder,
+      conflictAction
     });
   },
 

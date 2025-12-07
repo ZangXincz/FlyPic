@@ -42,7 +42,8 @@ module.exports = {
     CACHE_SIZE_KB: 4096,
     CLEANUP_INTERVAL_MS: 60000,     // 清理间隔：1分钟
     DB_IDLE_TIMEOUT_MS: 60000,      // 数据库空闲超时：60秒
-    DB_CLEANUP_CHECK_INTERVAL: 10000 // 数据库清理检查间隔：10秒
+    DB_CLEANUP_CHECK_INTERVAL: 10000, // 数据库清理检查间隔：10秒（已优化）
+    WAL_CHECKPOINT_INTERVAL_MS: 600000 // WAL checkpoint间隔：10分钟（降低I/O开销）
   },
   
   // 数据库配置

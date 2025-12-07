@@ -6,7 +6,6 @@ import { useScanStore } from '../stores/useScanStore';
 import { imageAPI } from '../api';
 import { onUserActionStart, onUserActionEnd } from '../services/imageLoadService';
 import requestManager, { RequestType } from '../services/requestManager';
-import imageCache from '../utils/imageCache';
 import domCleanup from '../utils/domCleanup';
 import ImageWaterfall from './ImageWaterfall';
 import Dashboard from './Dashboard';
@@ -55,11 +54,6 @@ function MainContent() {
         hasMore: false
       });
       return;
-    }
-
-    // 初始加载时重置本地缓存
-    if (isInitialLoad) {
-      imageCache.clear(); // 清理缓存
     }
 
     // 暂停空闲加载并取消之前的所有请求（关键！）
