@@ -14,6 +14,9 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* 全局使用语义变量，避免暗色模式下文本仍然是黑色 */
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 #root {
@@ -46,6 +49,34 @@ body {
   --text-secondary: #a8a8a8;  /* 次要文字（从 #b0b0b0 微调） */
   --border-color: #3a3a3a;    /* 边框（从 #333333 调亮，更柔和） */
   --hover-bg: #323232;        /* 悬停背景 */
+}
+
+/* ==================== 语义颜色类（使用 CSS 变量） ==================== */
+/* 这些类名在 JSX 中广泛使用，这里把它们真正映射到变量上 */
+
+.bg-primary {
+  background-color: var(--bg-primary);
+}
+
+.bg-secondary {
+  background-color: var(--bg-secondary);
+}
+
+.bg-tertiary {
+  background-color: var(--bg-tertiary);
+}
+
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-secondary);
+  opacity: 0.85;
 }
 
 /* ==================== 必要的暗色主题覆盖 ==================== */
