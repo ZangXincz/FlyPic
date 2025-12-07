@@ -29,11 +29,9 @@ const upload = multer({
  * conflictAction: 'skip' | 'replace' | 'rename'
  */
 router.post('/', upload.array('files', 50), asyncHandler(async (req, res) => {
-  console.log('📤 收到上传请求');
-  console.log('  libraryId:', req.body.libraryId);
-  console.log('  targetFolder:', req.body.targetFolder);
-  console.log('  conflictAction:', req.body.conflictAction);
-  console.log('  文件数量:', req.files?.length);
+  const requestStartTime = Date.now();
+  const totalSize = req.files?.length > 0 ? req.files.reduce((sum, f) => sum + f.size, 0) : 0;
+  console.log(`\n📤 上传 ${req.files?.length} 个文件 (${(totalSize / 1024 / 1024).toFixed(2)}MB) 到 [${req.body.targetFolder || '根目录'}]`);
   
   const { libraryId, targetFolder, conflictAction } = req.body;
   const files = req.files;
@@ -151,7 +149,6 @@ router.post('/', upload.array('files', 50), asyncHandler(async (req, res) => {
 
       // 写入文件（同步，快速）
       fs.writeFileSync(filePath, file.buffer);
-      console.log(`📥 已保存: ${filename} (${(file.size / 1024).toFixed(2)} KB)`);
       
       // 计算相对路径（使用最终的文件名）
       const relativePath = targetFolder 
@@ -171,7 +168,7 @@ router.post('/', upload.array('files', 50), asyncHandler(async (req, res) => {
         filesToProcess.push({ filePath, filename });
       }
     } catch (error) {
-      console.error(`❌ 保存失败: ${file.originalname}`, error);
+      console.error(`❌ 保存失败: ${file.originalname} -`, error.message);
       results.failed.push({
         filename: file.originalname,
         error: error.message
@@ -180,26 +177,30 @@ router.post('/', upload.array('files', 50), asyncHandler(async (req, res) => {
   }
   
   // 第二阶段：后台异步处理图片（生成缩略图、提取元数据）
-  // 不阻塞响应，让前端可以立即刷新
   if (filesToProcess.length > 0) {
     setImmediate(async () => {
-      console.log(`🔄 开始后台处理 ${filesToProcess.length} 个图片...`);
+      const processStartTime = Date.now();
+      let processedCount = 0;
+      let failedCount = 0;
+      
       for (const { filePath, filename } of filesToProcess) {
         try {
-          await processImage(filePath, libraryPath, db.db);
-          console.log(`✅ 已处理: ${filename}`);
+          await processImage(filePath, libraryPath, db);
+          processedCount++;
         } catch (processError) {
-          console.error(`❌ 处理图片失败: ${filename}`, processError.message);
+          failedCount++;
+          console.error(`❌ 处理失败: ${filename} -`, processError.message);
         }
       }
-      console.log(`✅ 后台处理完成`);
+      
+      const totalProcessTime = Date.now() - processStartTime;
+      console.log(`✅ 后台处理完成: ${processedCount}/${filesToProcess.length} (${totalProcessTime}ms)`);
     });
   }
 
   // 更新文件夹图片计数
   if (targetFolder && results.success.length > 0) {
     try {
-      console.log(`📊 更新文件夹计数: ${targetFolder}`);
       const updateStmt = db.db.prepare(`
         UPDATE folders 
         SET image_count = (
@@ -214,14 +215,13 @@ router.post('/', upload.array('files', 50), asyncHandler(async (req, res) => {
         Date.now(),
         targetFolder
       );
-      console.log(`✅ 文件夹计数已更新`);
     } catch (error) {
-      console.error('❌ 更新文件夹计数失败:', error);
-      console.error('  错误详情:', error.stack);
+      console.error('❌ 更新文件夹计数失败:', error.message);
     }
   }
   
-  console.log(`📋 上传结果: 成功 ${results.success.length}, 失败 ${results.failed.length}, 冲突 ${results.conflicts.length}`);
+  const totalRequestTime = Date.now() - requestStartTime;
+  console.log(`✅ HTTP响应: 成功 ${results.success.length}, 失败 ${results.failed.length}, 冲突 ${results.conflicts.length} (${totalRequestTime}ms)\n`);
 
   res.json({
     success: true,

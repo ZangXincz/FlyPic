@@ -237,6 +237,9 @@ async function getFolderStructure(libraryPath) {
  * @param {boolean} dryRun - If true, return data instead of inserting into DB (for batch write)
  */
 async function processImage(imagePath, libraryPath, db, dryRun = false) {
+  const processStartTime = Date.now();
+  const stepTimes = {}; // 记录每个步骤的耗时
+  
   try {
     const relativePath = path.relative(libraryPath, imagePath);
     const filename = path.basename(imagePath);
@@ -244,8 +247,13 @@ async function processImage(imagePath, libraryPath, db, dryRun = false) {
     const folder = folderRaw === '.' ? '' : folderRaw.replace(/\\/g, '/');
 
     // Check if image already exists in database
+    let stepStart = Date.now();
     const existing = db.getImageByPath(relativePath.replace(/\\/g, '/'));
+    stepTimes.dbCheck = Date.now() - stepStart;
+    
+    stepStart = Date.now();
     const currentHash = calculateFileHash(imagePath);
+    stepTimes.hashCalc = Date.now() - stepStart;
 
     // For unchanged files, check whether thumbnails need upgrade/regeneration
     let needRegenThumbs = false;
@@ -270,17 +278,26 @@ async function processImage(imagePath, libraryPath, db, dryRun = false) {
 
     // Skip only if unchanged and thumbnails are up-to-date
     if (existing && existing.file_hash === currentHash && !needRegenThumbs) {
+      const totalTime = Date.now() - processStartTime;
+      // logger.info(`⏭️  跳过 (未变化): ${filename} (${totalTime}ms)`);
       return { status: 'skipped', path: relativePath };
     }
 
     // Get image metadata
+    stepStart = Date.now();
     const metadata = await getImageMetadata(imagePath);
+    stepTimes.metadata = Date.now() - stepStart;
     if (!metadata) {
+      const totalTime = Date.now() - processStartTime;
+      logger.warn(`❌ 元数据读取失败: ${filename} (${totalTime}ms)`);
       return { status: 'error', path: relativePath, error: 'Failed to read metadata' };
     }
 
     // Generate thumbnails (also for unchanged files when thumbnails missing/outdated)
+    stepStart = Date.now();
     const thumbnails = await generateImageThumbnails(imagePath, libraryPath);
+    stepTimes.thumbnail = Date.now() - stepStart;
+    
     const fileType = getFileType(imagePath);
 
     // 使用缩略图的实际尺寸（对于视频/PSD，这是提取后的真实尺寸）
@@ -308,12 +325,30 @@ async function processImage(imagePath, libraryPath, db, dryRun = false) {
     }
 
     // Insert/update in database
+    stepStart = Date.now();
     db.insertImage(imageData);
-
-    return { status: 'processed', path: relativePath };
+    stepTimes.dbInsert = Date.now() - stepStart;
+    
+    const totalTime = Date.now() - processStartTime;
+    
+    // 输出详细的性能日志
+    const logParts = [
+      `总计${totalTime}ms`,
+      `哈希${stepTimes.hashCalc}ms`,
+      `元数据${stepTimes.metadata}ms`,
+      `缩略图${stepTimes.thumbnail}ms`
+    ];
+    
+    // 只有当总耗时超过 500ms 时才输出警告
+    if (totalTime > 500) {
+      logger.warn(`⚠️  处理较慢: ${filename} (${logParts.join(', ')})`);
+    }
+    
+    return { status: 'processed', path: relativePath, timing: stepTimes, totalTime };
   } catch (error) {
-    logger.error('处理图片失败:', path.basename(imagePath), error.message);
-    return { status: 'error', path: imagePath, error: error.message };
+    const totalTime = Date.now() - processStartTime;
+    logger.error(`❌ 处理图片失败: ${path.basename(imagePath)} (${totalTime}ms)`, error.message);
+    return { status: 'error', path: imagePath, error: error.message, totalTime };
   }
 }
 

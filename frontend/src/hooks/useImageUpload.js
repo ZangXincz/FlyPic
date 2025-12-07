@@ -98,7 +98,8 @@ export const useImageUpload = () => {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
-    logger.file(`准备上传 ${files.length} 个文件到: ${selectedFolder || '根目录'}`);
+    const uploadStartTime = Date.now();
+    logger.file(`📤 开始上传 ${files.length} 个文件到 [${selectedFolder || '根目录'}]`);
 
     // 开始上传
     setUploadProgress({ isUploading: true, percent: 0, current: 0, total: files.length });
@@ -115,24 +116,30 @@ export const useImageUpload = () => {
       );
 
       // 上传完成
-      setUploadProgress({ isUploading: false, percent: 100, current: result.success.length, total: files.length });
+      const successList = result.data?.success || [];
+      setUploadProgress({ isUploading: false, percent: 100, current: successList.length, total: files.length });
 
       // 检查是否有冲突
-      const conflicts = result.conflicts || [];
+      const conflicts = result.data?.conflicts || [];
       if (conflicts.length > 0 && onConflict) {
-        // 有冲突，回调处理
-        logger.file(`检测到 ${conflicts.length} 个文件冲突`);
+        logger.file(`⚠️  检测到 ${conflicts.length} 个文件冲突，等待处理...`);
         onConflict(conflicts, files, selectedFolder || '');
         setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
         return { hasConflicts: true, conflicts };
       }
 
       // 成功后刷新
-      const successCount = result.success?.length || 0;
-      const failedCount = result.failed?.length || 0;
+      const successCount = result.data?.success?.length || 0;
+      const failedCount = result.data?.failed?.length || 0;
+      
+      if (failedCount > 0) {
+        logger.file(`📊 上传结果: 成功 ${successCount}, 失败 ${failedCount}`);
+      }
 
       if (successCount > 0) {
-        // 立即刷新当前文件夹的图片列表
+        // 延迟150ms后刷新，等待后台缩略图生成完成
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
         const params = { folder: selectedFolder || '' };
         const response = await imageAPI.search(currentLibraryId, params);
         setImages(response.images);
@@ -146,7 +153,6 @@ export const useImageUpload = () => {
           try {
             const response2 = await imageAPI.search(currentLibraryId, params);
             setImages(response2.images);
-            logger.data('缩略图刷新完成');
           } catch (err) {
             logger.error('刷新缩略图失败:', err);
           }
@@ -156,6 +162,9 @@ export const useImageUpload = () => {
       setTimeout(() => {
         setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
       }, 3000);
+      
+      const totalTime = Date.now() - uploadStartTime;
+      logger.file(`✅ 上传完成 (${totalTime}ms)`);
 
       return { 
         success: true, 
@@ -164,7 +173,7 @@ export const useImageUpload = () => {
         hasConflicts: false 
       };
     } catch (error) {
-      logger.error('上传失败:', error);
+      logger.error('❌ 上传失败:', error.message);
       setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
       throw error;
     }
@@ -176,10 +185,10 @@ export const useImageUpload = () => {
   const uploadWithConflictAction = useCallback(async (files, targetFolder, conflictAction) => {
     if (!currentLibraryId) return;
 
-    logger.file(`处理上传冲突: ${conflictAction}`);
+    const uploadStartTime = Date.now();
+    logger.file(`📤 处理冲突后重新上传 (${conflictAction})`);
     
     if (conflictAction === 'skip') {
-      logger.file('用户选择跳过上传');
       return { success: true, skipped: true };
     }
     
@@ -199,18 +208,21 @@ export const useImageUpload = () => {
       );
       
       // 上传完成
+      const successList = result.data?.success || [];
       setUploadProgress({ 
         isUploading: false, 
         percent: 100, 
-        current: result.success.length, 
+        current: successList.length, 
         total: files.length 
       });
       
-      const successCount = result.success?.length || 0;
-      const failedCount = result.failed?.length || 0;
+      const successCount = result.data?.success?.length || 0;
+      const failedCount = result.data?.failed?.length || 0;
       
       // 刷新图片列表
       if (successCount > 0) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
         const params = { folder: selectedFolder || '' };
         const response = await imageAPI.search(currentLibraryId, params);
         setImages(response.images);
@@ -223,7 +235,6 @@ export const useImageUpload = () => {
           try {
             const response2 = await imageAPI.search(currentLibraryId, params);
             setImages(response2.images);
-            logger.data('缩略图刷新完成');
           } catch (err) {
             logger.error('刷新缩略图失败:', err);
           }
@@ -233,10 +244,13 @@ export const useImageUpload = () => {
       setTimeout(() => {
         setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
       }, 3000);
+      
+      const totalTime = Date.now() - uploadStartTime;
+      logger.file(`✅ 上传完成 (${totalTime}ms)`);
 
       return { success: true, successCount, failedCount };
     } catch (error) {
-      logger.error('上传失败:', error);
+      logger.error('❌ 上传失败:', error.message);
       setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
       throw error;
     }
