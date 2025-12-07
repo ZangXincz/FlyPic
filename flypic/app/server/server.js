@@ -62,8 +62,11 @@ const io = new Server(server, {
 // 准备依赖注入
 // 包装 config 函数为对象接口
 const configManager = {
+  // 兼容两种命名风格
   load: () => config.loadConfig(),
   save: (data) => config.saveConfig(data),
+  loadConfig: () => config.loadConfig(),
+  saveConfig: (data) => config.saveConfig(data),
   addLibrary: (name, path) => config.addLibrary(name, path),
   removeLibrary: (id) => config.removeLibrary(id),
   updateLibrary: (id, updates) => config.updateLibrary(id, updates),
@@ -117,6 +120,26 @@ server.listen(PORT, () => {
 
   try {
     const currentConfig = config.loadConfig();
+    
+    // 启动定时清理任务（每分钟检查一次过期临时文件）
+    const fileService = app.get('fileService');
+    setInterval(async () => {
+      if (currentConfig.libraries && currentConfig.libraries.length > 0) {
+        for (const library of currentConfig.libraries) {
+          try {
+            const result = await fileService.cleanExpiredTempFiles(library.id);
+            if (result.cleaned > 0 || result.thumbnailsCleaned > 0) {
+              const parts = [];
+              if (result.cleaned > 0) parts.push(`${result.cleaned} 个过期文件`);
+              if (result.thumbnailsCleaned > 0) parts.push(`${result.thumbnailsCleaned} 个缩略图`);
+              console.log(`🧹 已清理: ${parts.join('、')}`);
+            }
+          } catch (error) {
+            // 忽略错误
+          }
+        }
+      }
+    }, 60 * 1000); // 每分钟执行一次
     
     // 恢复所有素材库的扫描状态
     if (currentConfig.libraries && currentConfig.libraries.length > 0) {

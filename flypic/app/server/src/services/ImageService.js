@@ -163,6 +163,52 @@ class ImageService {
   }
 
   /**
+   * 批量更新图片评分
+   */
+  async updateRating(libraryId, paths, rating) {
+    const library = this._getLibrary(libraryId);
+    const db = this.dbPool.acquire(library.path);
+
+    try {
+      const imageModel = new ImageModel(db.db);
+      const results = {
+        success: [],
+        failed: []
+      };
+
+      // 批量更新
+      for (const imagePath of paths) {
+        try {
+          const stmt = db.db.prepare('UPDATE images SET rating = ? WHERE path = ?');
+          const result = stmt.run(rating, imagePath);
+          
+          if (result.changes > 0) {
+            results.success.push(imagePath);
+          } else {
+            results.failed.push({ path: imagePath, error: '图片不存在' });
+          }
+        } catch (error) {
+          results.failed.push({ path: imagePath, error: error.message });
+        }
+      }
+
+      // 更新数据库修改时间
+      if (results.success.length > 0) {
+        db.updateLastModified();
+      }
+
+      return {
+        updated: results.success.length,
+        failed: results.failed.length,
+        success: results.success,
+        failed: results.failed
+      };
+    } finally {
+      this.dbPool.release(library.path);
+    }
+  }
+
+  /**
    * 获取素材库对象
    * @private
    */

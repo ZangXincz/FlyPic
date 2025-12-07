@@ -46,7 +46,6 @@ Knowledge base/
 
 # 构建输出
 dist/
-flypic/
 flypic.zip
 
 # 测试数据
