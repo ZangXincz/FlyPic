@@ -137,27 +137,23 @@ function ImageWaterfall() {
   useImageKeyboard({
     onDelete: handleQuickDeleteWithUndoStack,
     onUndo: async () => {
-      console.log('🔍 撤销前状态:', {
-        undoStack: [...undoStack],
-        moveUndoHistory: moveUndoHistory.length,
-        deleteUndoHistory: undoHistory.length
-      });
+      // 检查撤销栏状态
       
       if (undoStack.length === 0) return;
       const last = undoStack[undoStack.length - 1];
       setUndoStack(prev => prev.slice(0, -1));
 
-      console.log(`🎯 准备撤销: ${last}`);
+      // 准备撤销操作
 
       if (last === 'move' && moveUndoHistory.length > 0) {
-        console.log('↩️ 执行移动撤销');
+        // 执行移动撤销
         await handleUndoMove();
       } else if (last === 'delete' && undoHistory.length > 0) {
-        console.log('↩️ 执行删除撤销');
+        // 执行删除撤销
         await handleUndo();
       }
       
-      console.log('✅ 撤销完成');
+      // 撤销完成
     },
     onCopy: () => {
       const result = handleCopy();

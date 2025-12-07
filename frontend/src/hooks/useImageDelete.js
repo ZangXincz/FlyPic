@@ -152,7 +152,7 @@ export const useImageDelete = () => {
     if (restoredFolder && restoredFolder !== selectedFolder) {
       // 跨文件夹：先跳转，让文件夹加载自然显示图片
       useImageStore.getState().setSelectedFolder(restoredFolder);
-      logger.debug(`📂 跳转到文件夹: ${restoredFolder}`);
+      // 跳转到恢复的文件夹
     } else {
       // 同文件夹：立即添加到列表
       const restoredImages = [...images, ...lastDeleted.images];

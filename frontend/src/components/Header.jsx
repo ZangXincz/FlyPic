@@ -6,6 +6,9 @@ import { useUIStore } from '../stores/useUIStore';
 import { useScanStore } from '../stores/useScanStore';
 import { useTheme } from '../hooks/useTheme';
 import { libraryAPI, scanAPI, watchAPI } from '../api';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('Header');
 
 function Header() {
   const { currentLibraryId } = useLibraryStore();

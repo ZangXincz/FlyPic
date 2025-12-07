@@ -304,7 +304,7 @@ function Sidebar() {
     ]).then(([deleteResult, foldersRes]) => {
       const { setFolders } = useImageStore.getState();
       if (deleteResult.failed.length > 0) {
-        logger.warn(`⚠️ 删除失败:`, deleteResult.failed);
+        logger.warn('删除失败:', deleteResult.failed);
         // 失败时回滚
         setUndoHistory(undoHistory);
         setUndoToast({ isVisible: false, message: '', count: 0 });
@@ -359,7 +359,6 @@ function Sidebar() {
     
     // 4. 立即跳转到恢复的文件夹
     setSelectedFolder(lastDeleted.folderPath);
-    logger.debug(`📂 跳转到文件夹: ${lastDeleted.folderPath}`);
     
     // 5. 后台执行API调用（不阻塞UI）
     Promise.all([
@@ -369,7 +368,7 @@ function Sidebar() {
       const { setFolders } = useImageStore.getState();
       // 检查恢复结果
       if (restoreResult.failed.length > 0) {
-        logger.warn(`⚠️ 恢复失败: ${restoreResult.failed.length} 个文件`);
+        logger.warn(`恢复失败: ${restoreResult.failed.length} 个文件`);
         const errorMsg = restoreResult.failed[0].error || '未知错误';
         
         // 失败时回滚
@@ -489,7 +488,7 @@ function Sidebar() {
           }, 3000);
         }
         
-        logger.debug(`✅ 已移动 ${items.length} 个${hasFolders ? '文件夹' : '文件'}到: ${targetFolderPath}`);
+        logger.file(`移动完成: ${items.length}个${hasFolders ? '文件夹' : '文件'} → ${targetFolderPath}`);
       }
       
       // 3. 刷新文件夹列表
@@ -656,7 +655,7 @@ function Sidebar() {
         setImages(response.images);
       }
       
-      logger.debug(`✅ 撤销拖拽移动完成`);
+      logger.file('撤销拖拽移动完成');
     } catch (error) {
       logger.error('撤销拖拽移动失败:', error);
       // 失败时回滚
@@ -696,7 +695,7 @@ function Sidebar() {
       } else {
         // 2. 移动成功，选中新位置
         setSelectedFolder(newPath);
-        logger.debug(`✅ 已移动文件夹: ${moveFolderPath} -> ${newPath}`);
+        logger.file(`移动文件夹: ${moveFolderPath} → ${newPath}`);
       }
 
       // 3. 刷新文件夹列表
@@ -758,14 +757,14 @@ function Sidebar() {
       const result = await fileAPI.rename(currentLibraryId, oldPath, newName);
       const newPath = result.newPath;
       
-      logger.debug(`✅ 文件夹重命名成功: ${oldName} → ${newName}, 路径: ${oldPath} → ${newPath}`);
+      logger.file(`文件夹重命名: ${oldName} → ${newName}`);
       
       const { setFolders, setSelectedFolder: setSelectedFolderGlobal, setSelectedFolderItem } = useImageStore.getState();
       
       // 1. 如果重命名的是当前选中的文件夹，立即切换到新路径
       // 这样可以避免先显示全部图片的闪烁
       if (isRenamingCurrentFolder) {
-        logger.debug(`📂 重命名当前文件夹: ${oldPath} → ${newPath}`);
+        logger.file(`重命名当前文件夹: ${oldPath} → ${newPath}`);
         setSelectedFolderGlobal(newPath);
 
         // 重命名当前浏览的文件夹时，立即刷新该文件夹的图片列表，避免连续重命名导致数量显示为 0
@@ -781,7 +780,7 @@ function Sidebar() {
       
       // 2. 后台刷新文件夹列表（不阻塞UI）
       imageAPI.getFolders(currentLibraryId).then(foldersRes => {
-        logger.debug('📁 重命名后最新文件夹列表:', foldersRes.folders);
+        logger.data('重命名后刷新文件夹列表');
         setFolders(foldersRes.folders);
 
         // 3. 用最新数据更新 selectedFolderItem，让右侧详情面板立即显示新名称
@@ -847,7 +846,7 @@ function Sidebar() {
 
     try {
       // 1. 添加素材库
-      logger.debug('📝 添加素材库...');
+      logger.data('添加素材库...');
       const response = await libraryAPI.add(newLibraryName.trim(), newLibraryPath.trim());
       const newLibId = response.id;
       const hasExistingIndex = response.hasExistingIndex;
@@ -865,7 +864,7 @@ function Sidebar() {
       setIsAdding(false); // 立即释放按钮
 
       // 3. 切换到新素材库
-      logger.debug('🔄 切换到新素材库...');
+      logger.data('切换到新素材库...');
       await libraryAPI.setCurrent(newLibId);
       setCurrentLibrary(newLibId);
       setSelectedFolder(null);
@@ -887,7 +886,7 @@ function Sidebar() {
 
       // 6. 如果有已有索引，先快速加载数据库中的数据
       if (hasExistingIndex) {
-        logger.debug('检测到已有索引，先加载现有数据...');
+        logger.data('检测到已有索引，先加载现有数据...');
         try {
           const [foldersRes, countRes] = await Promise.all([
             imageAPI.getFolders(newLibId),
@@ -895,27 +894,27 @@ function Sidebar() {
           ]);
           useImageStore.getState().setFolders(foldersRes.folders);
           useImageStore.getState().setTotalImageCount(countRes.count);
-          logger.debug('✅ 已加载现有数据');
+          logger.data('已加载现有数据');
         } catch (err) {
-          logger.warn('⚠️ 加载现有数据失败:', err);
+          logger.warn('加载现有数据失败:', err.message);
         }
       }
 
       // 7. 开始异步扫描（不等待，Socket.IO 会推送进度）
-      logger.debug('🔍 开始异步扫描...');
+      logger.data('开始异步扫描...');
       if (hasExistingIndex) {
-        logger.debug('执行增量同步，检测变化...');
+        logger.data('执行增量同步，检测变化...');
         scanAPI.sync(newLibId, false); // wait=false，异步执行
       } else {
-        logger.debug('首次添加，执行全量扫描...');
+        logger.data('首次添加，执行全量扫描...');
         scanAPI.fullScan(newLibId, false); // wait=false，异步执行
       }
 
       // 扫描在后台进行，Socket.IO 会推送进度和完成事件
       // App.jsx 中的 scanComplete 监听器会自动刷新数据
-      logger.debug('✅ 扫描已启动，请等待进度显示...');
+      logger.data('扫描已启动，请等待进度显示...');
     } catch (error) {
-      logger.error('❌ Error adding library:', error);
+      logger.error('添加素材库失败:', error);
       
       // 提取错误信息
       let errorMessage = error.message || '未知错误';
@@ -1008,7 +1007,7 @@ function Sidebar() {
         }
       }).catch(() => { });
     } catch (error) {
-      logger.error('Error setting current library:', error);
+      logger.error('切换素材库失败:', error);
       alert('切换素材库失败: ' + error.message);
       useImageStore.getState().setImageLoadingState({ isLoading: false });
     } finally {

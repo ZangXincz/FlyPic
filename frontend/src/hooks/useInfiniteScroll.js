@@ -75,7 +75,7 @@ export const useInfiniteScroll = () => {
       if (error.name === 'CanceledError' || error.name === 'AbortError') {
         return;
       }
-      logger.error('Error loading more images:', error);
+      logger.error('加载更多图片失败:', error.message);
       requestManager.error(requestContext.id);
       setImageLoadingState({ isLoading: false });
     }

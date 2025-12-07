@@ -76,7 +76,7 @@ export const useImageRating = () => {
         useImageStore.getState().setOriginalImages(response.images);
       }
       
-      logger.debug(`⭐ 已将 ${imagesToRate.length} 张图片评为 ${rating} 星`);
+      logger.file(`已将 ${imagesToRate.length} 张图片评为 ${rating} 星`);
     } catch (error) {
       logger.error('评分失败:', error);
       alert('评分失败: ' + (error.message || '未知错误'));

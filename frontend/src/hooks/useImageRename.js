@@ -72,7 +72,7 @@ export const useImageRename = () => {
         filename: actualNewName
       });
 
-      logger.debug(`✅ 重命名成功: ${oldFilename} → ${actualNewName}`);
+      logger.file(`重命名成功: ${oldFilename} → ${actualNewName}`);
     } catch (error) {
       logger.error('重命名失败:', error);
       alert('重命名失败: ' + (error.message || '未知错误'));

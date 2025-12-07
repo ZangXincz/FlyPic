@@ -141,12 +141,12 @@ export const useImageClipboard = (showConflictDialog) => {
     // 1. 立即写入应用内剪贴板（用于应用内粘贴，同步操作）
     const itemsToCopy = imagesToCopy.map(img => ({ type: 'file', path: img.path, data: img }));
     copyToClipboard(itemsToCopy, 'copy');
-    logger.debug(`📋 已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
+    logger.file(`已复制 ${itemsToCopy.length} 个文件到应用内剪贴板`);
     
     // 2. 异步写入系统剪贴板（用于跨应用粘贴，不阻塞）
     copyImagesToSystemClipboard(imagesToCopy).then(success => {
       if (success) {
-        logger.debug(`✅ 已写入系统剪贴板，可粘贴到外部应用`);
+        logger.file('已写入系统剪贴板，可粘贴到外部应用');
       }
     });
 
@@ -184,7 +184,7 @@ export const useImageClipboard = (showConflictDialog) => {
   const executePaste = useCallback(async (items, targetFolder, conflictAction) => {
     if (!currentLibraryId) return;
 
-    logger.debug(`📋 开始粘贴 ${items.length} 个文件到: ${targetFolder}`);
+    logger.file(`开始粘贴 ${items.length} 个文件到: ${targetFolder}`);
 
     // 1. 立即更新文件夹计数（乐观更新）
     const originalFolders = folders;

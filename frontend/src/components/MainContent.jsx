@@ -9,6 +9,9 @@ import requestManager, { RequestType } from '../services/requestManager';
 import domCleanup from '../utils/domCleanup';
 import ImageWaterfall from './ImageWaterfall';
 import Dashboard from './Dashboard';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('MainContent');
 
 function MainContent() {
   const { currentLibraryId } = useLibraryStore();
@@ -117,7 +120,7 @@ function MainContent() {
       if (error.name === 'CanceledError' || error.name === 'AbortError') {
         return;
       }
-      console.error('Error loading images:', error);
+      logger.error('加载图片失败:', error.message);
       requestManager.error(requestContext.id);
     } finally {
       // 只有当请求仍然有效时才更新状态
@@ -167,7 +170,7 @@ function MainContent() {
       const { setSelectedFolder } = useImageStore.getState();
       setSelectedFolder(restoreFolder);
       localStorage.removeItem('flypic_restore_folder');
-      console.log('✅ 已恢复到文件夹:', restoreFolder);
+      logger.data('恢复文件夹:', restoreFolder);
     }
   }, []);
 

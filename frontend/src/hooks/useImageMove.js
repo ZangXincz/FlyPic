@@ -78,7 +78,7 @@ export const useImageMove = (showConflictDialog) => {
   const executeMove = useCallback(async (items, targetFolder, conflictAction = 'rename') => {
     if (!currentLibraryId) return;
 
-    logger.debug(`📁 开始移动 ${items.length} 个文件到: ${targetFolder}`);
+    logger.file(`开始移动 ${items.length} 个文件到: ${targetFolder}`);
 
     // 1. 立即从当前列表中移除这些图片（乐观更新）
     const movedPaths = new Set(items.map(item => item.path));
@@ -164,7 +164,7 @@ export const useImageMove = (showConflictDialog) => {
         setImages(response.images);
       }
       
-      logger.debug(`✅ 移动完成: 成功 ${successCount} 个${failedCount > 0 ? `, 失败 ${failedCount} 个` : ''}`);
+      logger.file(`移动完成: 成功 ${successCount} 个${failedCount > 0 ? `, 失败 ${failedCount} 个` : ''}`);
       
       return { success: true, successCount, failedCount };
     } catch (error) {
@@ -305,7 +305,7 @@ export const useImageMove = (showConflictDialog) => {
         setImages(response.images);
       }
       
-      logger.debug(`✅ 撤销移动完成`);
+      logger.file('撤销移动完成');
     }).catch(error => {
       logger.error('撤销移动失败:', error);
       // 失败时回滚

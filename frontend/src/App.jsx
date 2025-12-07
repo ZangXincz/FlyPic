@@ -12,6 +12,9 @@ import MainContent from './components/MainContent';
 import RightPanel from './components/RightPanel';
 import Header from './components/Header';
 import LibraryMissingModal from './components/LibraryMissingModal';
+import { createLogger } from './utils/logger';
+
+const logger = createLogger('App');
 
 function App() {
   // 使用统一的主题管理 Hook
@@ -94,7 +97,7 @@ function App() {
     });
 
     socket.on('connect_error', (error) => {
-      console.error('❌ 连接错误:', error.message);
+      logger.error('Socket连接错误:', error.message);
     });
 
     socket.on('scanProgress', (progress) => {
@@ -136,7 +139,7 @@ function App() {
           useImageStore.getState().setTotalImageCount(statsRes.total || 0);
           useImageStore.getState().setTotalSize(statsRes.totalSize || 0);
         }).catch(err => {
-          console.error('❌ 加载数据失败:', err.message);
+          logger.error('扫描完成后加载数据失败:', err.message);
         }).finally(() => {
           setScanProgress(null);
         });
@@ -147,7 +150,7 @@ function App() {
 
     socket.on('scanError', ({ libraryId, error }) => {
       setScanProgress(null);
-      console.error('❌ 扫描错误:', error);
+      logger.error('扫描错误:', error);
     });
 
 
@@ -175,7 +178,7 @@ function App() {
       useImageStore.getState().setTotalImageCount(statsResponse.total || 0);
       useImageStore.getState().setTotalSize(statsResponse.totalSize || 0);
     } catch (error) {
-      console.error('❌ 加载文件夹失败:', error.message);
+      logger.error('加载文件夹失败:', error.message);
     }
   };
 
@@ -223,7 +226,7 @@ function App() {
             return; // 不继续加载
           }
         } catch (validateError) {
-          console.warn('验证素材库路径失败:', validateError.message);
+          logger.warn('验证素材库路径失败:', validateError.message);
           // 验证失败时继续正常加载
         }
 
@@ -243,7 +246,7 @@ function App() {
       setIsConnecting(false);
       
     } catch (error) {
-      console.error(`❌ 加载素材库失败 (${retryCount + 1}/${maxRetries}):`, error.message);
+      logger.error(`加载素材库失败 (${retryCount + 1}/${maxRetries}):`, error.message);
       
       if (retryCount < maxRetries - 1) {
         // 重试
@@ -270,7 +273,7 @@ function App() {
       const response = await imageAPI.search(libraryId, params);
       useImageStore.getState().setImages(response.images);
     } catch (error) {
-      console.error('❌ 加载图片失败:', error.message);
+      logger.error('加载图片失败:', error.message);
     }
   };
 
@@ -282,7 +285,7 @@ function App() {
         rightPanelWidth: right
       });
     } catch (error) {
-      console.error('❌ 保存面板宽度失败:', error.message);
+      logger.error('保存面板宽度失败:', error.message);
     }
   };
 
@@ -434,7 +437,7 @@ function App() {
       await scanAPI.fullScan(missingLibrary.id);
       // 扫描会通过 Socket.IO 推送进度
     } catch (error) {
-      console.error('启动扫描失败:', error.message);
+      logger.error('启动扫描失败:', error.message);
       alert('启动扫描失败: ' + error.message);
     }
   };
@@ -454,7 +457,7 @@ function App() {
       useImageStore.getState().setTotalImageCount(0);
       useImageStore.getState().setSelectedFolder(null);
     } catch (error) {
-      console.error('移除素材库失败:', error.message);
+      logger.error('移除素材库失败:', error.message);
     }
     
     // 关闭弹窗
@@ -474,7 +477,7 @@ function App() {
       await libraryAPI.remove(missingLibrary.id);
       removeLibrary(missingLibrary.id);
     } catch (error) {
-      console.error('移除素材库失败:', error.message);
+      logger.error('移除素材库失败:', error.message);
     }
     
     // 关闭弹窗

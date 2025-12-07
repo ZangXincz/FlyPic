@@ -41,7 +41,7 @@ function ensureFolderChain(db, folderPath) {
     
     // 安全检查：确保 db 对象有 getFolderByPath 方法
     if (typeof db.getFolderByPath !== 'function') {
-      console.error('❌ db.getFolderByPath 不是函数');
+      logger.error('db.getFolderByPath 不是函数');
       return;
     }
     
@@ -100,7 +100,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
 
         // 检查文件是否存在
         if (!fs.existsSync(full)) {
-          console.warn(`File not found, skipping: ${full}`);
+          logger.warn(`File not found, skipping: ${full}`);
           continue;
         }
 
@@ -118,7 +118,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         }
         results.added++;
       } catch (error) {
-        console.error(`❌ 处理新增文件失败 ${file}:`, error.message);
+        logger.error(`处理新增文件失败 ${file}:`, error.message);
       }
     }
 
@@ -130,7 +130,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
 
         // 检查文件是否存在
         if (!fs.existsSync(full)) {
-          console.warn(`File not found, skipping: ${full}`);
+          logger.warn(`File not found, skipping: ${full}`);
           continue;
         }
 
@@ -139,7 +139,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         affectedFolders.add(folder);
         results.modified++;
       } catch (error) {
-        console.error(`❌ 处理修改文件失败 ${file}:`, error.message);
+        logger.error(`处理修改文件失败 ${file}:`, error.message);
       }
     }
 
@@ -160,7 +160,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         }
         results.deleted++;
       } catch (error) {
-        console.error(`❌ 删除文件失败 ${file}:`, error.message);
+        logger.error(`删除文件失败 ${file}:`, error.message);
       }
     }
 
@@ -175,7 +175,7 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         if (parent && parent !== '.') affectedFolders.add(parent);
         results.foldersRemoved++;
       } catch (error) {
-        console.error(`❌ 删除目录失败 ${dir}:`, error.message);
+        logger.error(`删除目录失败 ${dir}:`, error.message);
       }
     }
 
@@ -185,14 +185,14 @@ async function applyChangesFromEvents(libraryPath, db, events) {
         try {
           db.updateFolderImageCount(folderPath);
         } catch (error) {
-          console.error(`❌ 更新文件夹计数失败 ${folderPath}:`, error.message);
+          logger.error(`更新文件夹计数失败 ${folderPath}:`, error.message);
         }
       }
     });
 
     return results;
   } catch (error) {
-    console.error('❌ 应用变化失败:', error.message);
+    logger.error('应用变化失败:', error.message);
     throw error;
   }
 }
@@ -312,7 +312,7 @@ async function processImage(imagePath, libraryPath, db, dryRun = false) {
 
     return { status: 'processed', path: relativePath };
   } catch (error) {
-    console.error('❌ 处理图片失败:', path.basename(imagePath), error.message);
+    logger.error('处理图片失败:', path.basename(imagePath), error.message);
     return { status: 'error', path: imagePath, error: error.message };
   }
 }
@@ -501,7 +501,7 @@ async function scanLibrary(libraryPath, db, onProgress, libraryId = null, resume
     // 强制 GC（如果可用）
     if (global.gc) {
       global.gc();
-      logger.debug('内存已清理');
+      logger.perf('内存已清理');
     }
 
     // 标记扫描完成
@@ -543,14 +543,14 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     const toCheck = [...currentPaths].filter(p => dbPaths.has(p));
     let toDelete = [...dbPaths].filter(p => !currentPaths.has(p));
 
-    console.log(`🔄 同步: +${toAdd.length} 检查${toCheck.length} -${toDelete.length}`);
+    logger.perf(`同步: +${toAdd.length} 检查${toCheck.length} -${toDelete.length}`);
 
     // 安全检查：如果要删除的文件数量超过数据库中文件的50%，可能是路径匹配问题
     const dbImageCount = dbPaths.size;
     if (toDelete.length > 0 && dbImageCount > 0) {
       const deleteRatio = toDelete.length / dbImageCount;
       if (deleteRatio > 0.5 && toDelete.length > 10) {
-        console.warn(`⚠️ 安全检查: 跳过删除 ${toDelete.length}/${dbImageCount} 个文件 (${(deleteRatio * 100).toFixed(1)}%)`);
+        logger.warn(`安全检查: 跳过删除 ${toDelete.length}/${dbImageCount} 个文件 (${(deleteRatio * 100).toFixed(1)}%)`);
         toDelete = [];
       }
     }
@@ -591,7 +591,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     }).length;
 
     if (modifiedCount > 0) {
-      console.log(`📝 发现 ${modifiedCount} 个修改文件`);
+      logger.perf(`发现 ${modifiedCount} 个修改文件`);
     }
 
     // Delete removed files
@@ -602,7 +602,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
 
     // Rebuild folder structure if there are changes or forced
     if (toAdd.length > 0 || toDelete.length > 0 || forceRebuildFolders) {
-      console.log('📂 重建文件夹结构...');
+      logger.perf('重建文件夹结构...');
 
       // Get current folder structure from file system
       const currentFolders = await getFolderStructure(libraryPath);
@@ -627,7 +627,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
       });
 
       if (foldersToAdd.length > 0 || foldersToDelete.length > 0) {
-        console.log(`📂 文件夹变化: +${foldersToAdd.length} -${foldersToDelete.length}`);
+        logger.perf(`文件夹变化: +${foldersToAdd.length} -${foldersToDelete.length}`);
       }
 
       // Update folder image counts
@@ -653,7 +653,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
     }
 
     const totalTime = (Date.now() - startTime) / 1000;
-    console.log(`✅ 同步完成 (${totalTime.toFixed(1)}秒)`);
+    logger.perf(`同步完成 (${totalTime.toFixed(1)}秒)`);
 
     // 清理 Sharp 缓存
     clearSharpCache();
@@ -664,7 +664,7 @@ async function syncLibrary(libraryPath, db, forceRebuildFolders = false, onProgr
       deleted: toDelete.length
     };
   } catch (error) {
-    console.error('❌ 同步失败:', error.message);
+    logger.error('同步失败:', error.message);
     clearSharpCache();
     throw error;
   }
@@ -698,7 +698,7 @@ async function quickSync(libraryPath, db) {
   if (toDelete.length > 0 && dbImageCount > 0) {
     const deleteRatio = toDelete.length / dbImageCount;
     if (deleteRatio > 0.5 && toDelete.length > 10) {
-      console.warn(`⚠️ 跳过删除 ${toDelete.length} 个文件`);
+      logger.warn(`跳过删除 ${toDelete.length} 个文件`);
       toDelete = [];
     }
   }
@@ -714,7 +714,7 @@ async function quickSync(libraryPath, db) {
       }
       await processImage(fullPath, libraryPath, db);
     } catch (err) {
-      console.error(`❌ 添加失败 ${relativePath}:`, err.message);
+      logger.error(`添加失败 ${relativePath}:`, err.message);
     }
   }
 
@@ -730,7 +730,7 @@ async function quickSync(libraryPath, db) {
 
   const elapsed = Date.now() - startTime;
   if (toAdd.length > 0 || toDelete.length > 0) {
-    console.log(`⚡ 快速同步: +${toAdd.length} -${toDelete.length} (${elapsed}ms)`);
+    logger.perf(`快速同步: +${toAdd.length} -${toDelete.length} (${elapsed}ms)`);
     // 有变化时清理 Sharp 缓存
     clearSharpCache();
   }

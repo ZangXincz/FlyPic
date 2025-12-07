@@ -98,7 +98,7 @@ export const useImageUpload = () => {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
-    logger.debug(`📤 准备上传 ${files.length} 个文件到: ${selectedFolder || '根目录'}`);
+    logger.file(`准备上传 ${files.length} 个文件到: ${selectedFolder || '根目录'}`);
 
     // 开始上传
     setUploadProgress({ isUploading: true, percent: 0, current: 0, total: files.length });
@@ -121,7 +121,7 @@ export const useImageUpload = () => {
       const conflicts = result.conflicts || [];
       if (conflicts.length > 0 && onConflict) {
         // 有冲突，回调处理
-        logger.debug(`⚠️ 检测到 ${conflicts.length} 个文件冲突`);
+        logger.file(`检测到 ${conflicts.length} 个文件冲突`);
         onConflict(conflicts, files, selectedFolder || '');
         setUploadProgress({ isUploading: false, percent: 0, current: 0, total: 0 });
         return { hasConflicts: true, conflicts };
@@ -146,7 +146,7 @@ export const useImageUpload = () => {
           try {
             const response2 = await imageAPI.search(currentLibraryId, params);
             setImages(response2.images);
-            logger.debug('✅ 缩略图刷新完成');
+            logger.data('缩略图刷新完成');
           } catch (err) {
             logger.error('刷新缩略图失败:', err);
           }
@@ -176,10 +176,10 @@ export const useImageUpload = () => {
   const uploadWithConflictAction = useCallback(async (files, targetFolder, conflictAction) => {
     if (!currentLibraryId) return;
 
-    logger.debug(`处理上传冲突: ${conflictAction}`);
+    logger.file(`处理上传冲突: ${conflictAction}`);
     
     if (conflictAction === 'skip') {
-      logger.debug('用户选择跳过上传');
+      logger.file('用户选择跳过上传');
       return { success: true, skipped: true };
     }
     
@@ -223,7 +223,7 @@ export const useImageUpload = () => {
           try {
             const response2 = await imageAPI.search(currentLibraryId, params);
             setImages(response2.images);
-            logger.debug('✅ 缩略图刷新完成');
+            logger.data('缩略图刷新完成');
           } catch (err) {
             logger.error('刷新缩略图失败:', err);
           }

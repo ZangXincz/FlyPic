@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { processImage } = require('../../utils/scanner');
+const logger = require('../utils/logger');
 
 // 配置 multer 使用内存存储
 const storage = multer.memoryStorage();
